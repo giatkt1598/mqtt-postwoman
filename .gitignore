@@ -1,0 +1,10 @@
+node_modules
+dist
+packages/*/dist
+packages/*/node_modules
+data
+.DS_Store
+*.db
+*.db-journal
+*.log
+.env

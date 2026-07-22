@@ -1,0 +1,16 @@
+{
+  "name": "mqtt-postwoman",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace @mqtt-postwoman/server\" \"npm run dev --workspace @mqtt-postwoman/web\"",
+    "build": "npm run build --workspace @mqtt-postwoman/server && npm run build --workspace @mqtt-postwoman/web",
+    "start": "npm run start --workspace @mqtt-postwoman/server",
+    "test": "npm run test --workspace @mqtt-postwoman/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
