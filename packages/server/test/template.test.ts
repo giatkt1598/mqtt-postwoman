@@ -24,6 +24,12 @@ test("resolves now token inside json string", () => {
   assert.equal(typeof payload.publishDate, "string");
 });
 
+test("resolves now token with a Day.js format", () => {
+  const result = resolveTemplatePayload(fakeDb, '{"publishDate":"{{now:yyyy-MM-dd}}"}');
+  const payload = result.value as Record<string, unknown>;
+  assert.match(String(payload.publishDate), /^\d{4}-\d{2}-\d{2}$/);
+});
+
 test("resolves env token", () => {
   const result = resolveTemplatePayload(fakeDb, '{"name":"{{env.NAME}}"}', undefined, { NAME: "mqtt" });
   const payload = result.value as Record<string, unknown>;
@@ -34,4 +40,10 @@ test("resolves sequence token with batch offset", () => {
   const result = resolveTemplatePayload(fakeDb, '{"sequence":"{{sequence:1}}"}', undefined, {}, 2);
   const payload = result.value as Record<string, unknown>;
   assert.equal(payload.sequence, "3");
+});
+
+test("resolves padded sequence token with batch offset", () => {
+  const result = resolveTemplatePayload(fakeDb, '{"sequence":"{{sequence:1:6}}"}', undefined, {}, 1);
+  const payload = result.value as Record<string, unknown>;
+  assert.equal(payload.sequence, "000002");
 });

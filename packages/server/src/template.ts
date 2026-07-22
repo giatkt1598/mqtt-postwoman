@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import dayjs from "dayjs";
 import { AppDatabase, listHelpers, getEnvironment } from "./db";
 import { HelperKind, TemplateHelperRow } from "./types";
 import { parseObjectLike, safeJsonParse } from "./utils";
@@ -18,11 +19,14 @@ export interface ResolvedTemplate {
 type HelperResolver = (config: Record<string, unknown>, context: TemplateContext) => unknown;
 
 function formatDate(date: Date, format?: unknown) {
-  if (typeof format !== "string" || !format) return date.toISOString();
-  if (format === "iso") return date.toISOString();
-  if (format === "date") return date.toISOString().slice(0, 10);
-  if (format === "time") return date.toISOString().slice(11, 19);
-  return new Intl.DateTimeFormat("en-GB", { dateStyle: "short", timeStyle: "medium" }).format(date);
+  const current = dayjs(date);
+  if (typeof format !== "string" || !format) return current.toISOString();
+  if (format === "iso") return current.toISOString();
+  if (format === "date") return current.format("YYYY-MM-DD");
+  if (format === "time") return current.format("HH:mm:ss");
+  // Accept the common lowercase year/day spelling while keeping Day.js tokens.
+  const dayjsFormat = format.replace(/yyyy/g, "YYYY").replace(/yy/g, "YY").replace(/dd/g, "DD");
+  return current.format(dayjsFormat);
 }
 
 const builtinHelpers: Record<string, HelperResolver> = {
@@ -55,9 +59,15 @@ function loadCustomHelpers(db: AppDatabase) {
 }
 
 function resolveHelper(name: string, context: TemplateContext) {
+  if (name.startsWith("now:")) {
+    return builtinHelpers.now?.({ format: name.slice("now:".length) }, context);
+  }
   if (name.startsWith("sequence:")) {
-    const start = Number(name.slice("sequence:".length));
-    return (Number.isFinite(start) ? start : 0) + (context.sequenceOffset ?? 0);
+    const [startText, digitsText] = name.slice("sequence:".length).split(":");
+    const start = Number(startText);
+    const value = (Number.isFinite(start) ? start : 0) + (context.sequenceOffset ?? 0);
+    const digits = Number(digitsText);
+    return Number.isInteger(digits) && digits > 0 ? String(value).padStart(digits, "0") : value;
   }
   if (name.startsWith("env.")) {
     const key = name.slice(4);

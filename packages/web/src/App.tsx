@@ -142,6 +142,50 @@ function mergeLogs(current: MessageLogRow[], incoming: MessageLogRow[]) {
   return [...byId.values()].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()).slice(0, 200);
 }
 
+function TopicAutocomplete({ value, topics, onChange }: { value: string; topics: string[]; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const currentPart = value.split(",").pop()?.trim() ?? "";
+  const suggestions = topics.filter((topic) => topic.toLowerCase().includes(currentPart.toLowerCase()));
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  const selectTopic = (topic: string) => {
+    const parts = value.split(",");
+    parts[parts.length - 1] = ` ${topic}`;
+    onChange(parts.join(",").replace(/^\s+/, ""));
+    setOpen(false);
+  };
+
+  return (
+    <div className="topic-autocomplete" ref={rootRef}>
+      <input
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+      />
+      {open && suggestions.length > 0 && (
+        <div className="topic-suggestion-list" role="listbox">
+          {suggestions.map((topic) => (
+            <button key={topic} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => selectTopic(topic)}>
+              {topic}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [brokerStatuses, setBrokerStatuses] = useState<Array<{ profileId: string; connected: boolean; refCount: number; lastError: string | null }>>([]);
@@ -878,10 +922,6 @@ export default function App() {
         </div>
       </aside>
 
-      <datalist id="mqtt-topic-suggestions">
-        {allTopics.map((topic) => <option key={topic} value={topic} />)}
-      </datalist>
-
       <main className="workspace">
         <header className="topbar">
           <div>
@@ -953,7 +993,7 @@ export default function App() {
             <div className="request-topic-row">
               <label className="topic-field">
                 Topic
-                <input list="mqtt-topic-suggestions" value={draft.topic} placeholder="device/+/status" onChange={(event) => setDraft({ ...draft, topic: event.target.value })} />
+                <TopicAutocomplete value={draft.topic} topics={allTopics} onChange={(topic) => setDraft({ ...draft, topic })} />
               </label>
               <button className="topic-clear" aria-label="Clear topic" title="Clear topic" onClick={() => setDraft({ ...draft, topic: "" })}>
                 ×
@@ -1053,7 +1093,7 @@ export default function App() {
                   <label>
                     Topics comma separated
                     <div className="topic-input-with-color">
-                      <input list="mqtt-topic-suggestions" value={consumerTopics} onChange={(event) => setConsumerTopics(event.target.value)} />
+                      <TopicAutocomplete value={consumerTopics} topics={allTopics} onChange={setConsumerTopics} />
                       <input
                         className="topic-color-picker"
                         type="color"
@@ -1153,9 +1193,9 @@ export default function App() {
                   <p>Use these tokens directly inside topic or payload templates.</p>
                   <div className="function-list">
                     <div className="function-row">
-                      <code>{`{{now}}`}</code>
-                      <span>Current time in ISO 8601 format.</span>
-                      <pre>{`{"publishDate":"{{now}}"}`}</pre>
+                      <code>{`{{now[:format]}}`}</code>
+                      <span>Current time, optionally formatted with Day.js tokens.</span>
+                      <pre>{`{"publishDate":"{{now:yyyy-MM-dd}}"}`}</pre>
                     </div>
                     <div className="function-row">
                       <code>{`{{uuid}}`}</code>
@@ -1163,9 +1203,9 @@ export default function App() {
                       <pre>{`{"requestId":"{{uuid}}"}`}</pre>
                     </div>
                     <div className="function-row">
-                      <code>{`{{sequence:1}}`}</code>
-                      <span>Generates a sequence value starting at the given number.</span>
-                      <pre>{`{"sequence":"{{sequence:1}}"}`}</pre>
+                      <code>{`{{sequence:<start>:<numberOfDigits>}}`}</code>
+                      <span>Generates a zero-padded sequence from the given start value.</span>
+                      <pre>{`{"sequence":"{{sequence:1:6}}"}`}</pre>
                     </div>
                   </div>
                 </div>
@@ -1396,7 +1436,7 @@ export default function App() {
                   <label>
                     Topics comma separated
                     <div className="topic-input-with-color">
-                      <input list="mqtt-topic-suggestions" value={consumerTopics} onChange={(event) => setConsumerTopics(event.target.value)} />
+                      <TopicAutocomplete value={consumerTopics} topics={allTopics} onChange={setConsumerTopics} />
                       <input
                         className="topic-color-picker"
                         type="color"
