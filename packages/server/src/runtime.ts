@@ -214,7 +214,15 @@ export class RuntimeManager {
     });
 
     this.brokers.set(profileId, broker);
-    await broker.ready;
+    try {
+      await broker.ready;
+    } catch (error) {
+      if (this.brokers.get(profileId) === broker) {
+        this.brokers.delete(profileId);
+      }
+      broker.client.end(true);
+      throw error;
+    }
     return broker;
   }
 
@@ -374,6 +382,38 @@ export class RuntimeManager {
           });
         }
       }
+    }
+
+    const updated = getConsumerSession(this.db.raw, sessionId);
+    this.broadcast({ type: "consumer.updated", payload: updated });
+    return updated;
+  }
+
+  async unsubscribeConsumerTopic(sessionId: string, topic: string) {
+    const session = getConsumerSession(this.db.raw, sessionId);
+    if (!session) return null;
+    const currentTopics = JSON.parse(session.topicsJson) as string[];
+    if (!currentTopics.includes(topic)) {
+      throw new Error(`Topic is not subscribed: ${topic}`);
+    }
+
+    const remainingTopics = currentTopics.filter((item) => item !== topic);
+    const activeBroker = this.brokers.get(session.brokerProfileId);
+    if (remainingTopics.length) {
+      updateConsumerSession(this.db.raw, sessionId, { topics: remainingTopics, active: true });
+      const consumer = this.consumers.get(sessionId);
+      if (consumer) consumer.topics = remainingTopics;
+    } else {
+      this.consumers.delete(sessionId);
+      updateConsumerSession(this.db.raw, sessionId, { topics: [], active: false });
+    }
+
+    const stillUsed = Array.from(this.consumers.values()).some(
+      (consumer) => consumer.brokerProfileId === session.brokerProfileId && consumer.topics.includes(topic),
+    );
+    if (activeBroker && !stillUsed) {
+      activeBroker.subscriptions.delete(topic);
+      await new Promise<void>((resolve) => activeBroker.client.unsubscribe(topic, () => resolve()));
     }
 
     const updated = getConsumerSession(this.db.raw, sessionId);

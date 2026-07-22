@@ -19,5 +19,10 @@ services:
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
 
+  mosquitto-2:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1884:1883"
+
 volumes:
   app-data:

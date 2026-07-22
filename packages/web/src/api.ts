@@ -80,6 +80,8 @@ export const client = {
     create: (payload: { name: string; brokerProfileId: string; topics: string[]; qos: number }) =>
       api<ConsumerSessionRow>("/consumer-sessions", { method: "POST", body: JSON.stringify(payload) }),
     remove: (id: string) => api<void>(`/consumer-sessions/${id}`, { method: "DELETE" }),
+    unsubscribe: (id: string, topic: string) =>
+      api<ConsumerSessionRow | void>(`/consumer-sessions/${id}/topics`, { method: "DELETE", body: JSON.stringify({ topic }) }),
   },
   logs: {
     list: () => api<MessageLogRow[]>("/logs"),

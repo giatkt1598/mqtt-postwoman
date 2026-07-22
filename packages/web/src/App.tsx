@@ -22,6 +22,7 @@ type MainTab = "publishers" | "consumers" | "connections";
 type ConnectionView = "list" | "form";
 type CollectionModal = "create" | "edit" | null;
 type PayloadFormat = "raw" | "xml" | "json";
+type InactiveConsumerTopic = { key: string; topic: string; brokerProfileId: string };
 
 const emptyDraft = (collectionId = "", brokerProfileId = "", environmentId = ""): DraftRequest => ({
   collectionId,
@@ -46,6 +47,20 @@ function requestToDraft(request: RequestRow): DraftRequest {
     brokerProfileId: request.brokerProfileId ?? "",
     environmentId: request.environmentId ?? "",
   };
+}
+
+function isRequestModified(request: RequestRow | undefined, draft: DraftRequest | undefined) {
+  if (!request || !draft) return false;
+  return (
+    request.collectionId !== draft.collectionId ||
+    request.name !== draft.name ||
+    request.topic !== draft.topic ||
+    request.payloadTemplate !== draft.payloadTemplate ||
+    request.qos !== draft.qos ||
+    Boolean(request.retain) !== draft.retain ||
+    (request.brokerProfileId ?? "") !== draft.brokerProfileId ||
+    (request.environmentId ?? "") !== draft.environmentId
+  );
 }
 
 const emptyBrokerDraft = () => ({
@@ -117,6 +132,10 @@ function beautifyXml(value: string) {
     .join("\n");
 }
 
+function randomTopicColor() {
+  return `#${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}`;
+}
+
 function mergeLogs(current: MessageLogRow[], incoming: MessageLogRow[]) {
   const byId = new Map(current.map((log) => [log.id, log]));
   for (const log of incoming) byId.set(log.id, log);
@@ -153,11 +172,17 @@ export default function App() {
   const [draft, setDraft] = useState<DraftRequest>(emptyDraft());
   const [requestDrafts, setRequestDrafts] = useState<Record<string, DraftRequest>>({});
   const [payloadFormat, setPayloadFormat] = useState<PayloadFormat>("json");
-  const [batchCount, setBatchCount] = useState(10);
+  const [batchCount, setBatchCount] = useState(1);
   const [batchDelayMs, setBatchDelayMs] = useState(0);
   const [consumerTopics, setConsumerTopics] = useState("device/+/status");
-  const [consumerName, setConsumerName] = useState("consumer");
   const [consumerTopicColor, setConsumerTopicColor] = useState(() => localStorage.getItem("mqtt-postwoman.consumerTopicColor") ?? "#4fd1c5");
+  const [inactiveConsumerTopics, setInactiveConsumerTopics] = useState<InactiveConsumerTopic[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("mqtt-postwoman.inactiveConsumerTopics") ?? "[]") as InactiveConsumerTopic[];
+    } catch {
+      return [];
+    }
+  });
   const [topicColors, setTopicColors] = useState<Record<string, string>>(() => {
     try {
       return JSON.parse(localStorage.getItem("mqtt-postwoman.topicColors") ?? "{}") as Record<string, string>;
@@ -173,6 +198,7 @@ export default function App() {
   });
   const [envDraft, setEnvDraft] = useState({ id: "", name: "local", variablesJson: "{\n  \"env\": \"local\"\n}" });
   const [brokerDraft, setBrokerDraft] = useState(emptyBrokerDraft());
+  const [connectionTestMessage, setConnectionTestMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [helperDraft, setHelperDraft] = useState({
     id: "",
     name: "requestId",
@@ -311,13 +337,21 @@ export default function App() {
   const helpers = bootstrap?.helpers ?? [];
   const consumerSessions = bootstrap?.consumerSessions ?? [];
   const logs = historyLogs;
+  const publishLogCount = logs.filter((log) => log.direction === "publish").length;
+  const consumeLogCount = logs.filter((log) => log.direction === "consume").length;
   const allTopics = useMemo(
     () => [...new Set((bootstrap?.requests ?? []).map((request) => request.topic.trim()).filter(Boolean))].sort(),
     [bootstrap?.requests],
   );
   const getTopicColor = (topic: string) =>
     Object.entries(topicColors).find(([filter]) => topicMatches(filter, topic))?.[1] ?? "rgba(79, 209, 197, 0.5)";
+  const activeTopicKeys = new Set(
+    consumerSessions.flatMap((session) => (JSON.parse(session.topicsJson) as string[]).map((topic) => `${session.brokerProfileId}:${topic}`)),
+  );
   const activeConnection = brokers.find((broker) => broker.id === activeConnectionId) ?? null;
+  const activeConnectionStatus = brokerStatuses.find((status) => status.profileId === activeConnectionId);
+  const selectedRequestRecord = bootstrap?.requests.find((request) => request.id === selectedRequestId);
+  const selectedRequestModified = isRequestModified(selectedRequestRecord, draft);
   const fallbackConnectionId = activeConnectionId || brokers[0]?.id || "";
   const sortedCollections = useMemo(
     () => [...collections].sort((left, right) => Number(favoriteCollectionIds.includes(right.id)) - Number(favoriteCollectionIds.includes(left.id))),
@@ -467,6 +501,11 @@ export default function App() {
     await refresh();
     setSelectedRequestId(saved.id);
     setDraft(requestToDraft(saved));
+    setRequestDrafts((current) => {
+      const next = { ...current };
+      delete next[saved.id];
+      return next;
+    });
   };
 
   const deleteRequest = async () => {
@@ -483,29 +522,16 @@ export default function App() {
   };
 
   const publishRequest = async () => {
-    await client.publish({
-      requestId: draft.id,
-      brokerProfileId: draft.brokerProfileId || activeConnectionId || undefined,
-      topic: draft.topic,
-      payloadTemplate: draft.payloadTemplate,
-      qos: draft.qos,
-      retain: draft.retain,
-      environmentId: draft.environmentId || undefined,
-      variables: {},
-    });
-  };
-
-  const batchPublish = async () => {
     await client.batchPublish({
       requestId: draft.id,
-      brokerProfileId: draft.brokerProfileId || activeConnectionId || undefined,
+      brokerProfileId: activeConnectionId || draft.brokerProfileId || undefined,
       topic: draft.topic,
       payloadTemplate: draft.payloadTemplate,
-      environmentId: draft.environmentId || undefined,
       count: batchCount,
       delayMs: batchDelayMs,
       qos: draft.qos,
       retain: draft.retain,
+      environmentId: draft.environmentId || undefined,
       variables: {},
     });
   };
@@ -542,10 +568,57 @@ export default function App() {
         return next;
       });
       await refresh();
-      toast.success(`Subscribed to ${topics.join(", ")}.`);
+      setConsumerTopics("");
+      const nextColor = randomTopicColor();
+      setConsumerTopicColor(nextColor);
+      localStorage.setItem("mqtt-postwoman.consumerTopicColor", nextColor);
+      setInactiveConsumerTopics((current) => {
+        const next = current.filter((item) => item.brokerProfileId !== targetBroker || !topics.includes(item.topic));
+        localStorage.setItem("mqtt-postwoman.inactiveConsumerTopics", JSON.stringify(next));
+        return next;
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to subscribe");
     }
+  };
+
+  const unsubscribeTopic = async (sessionId: string, topic: string) => {
+    try {
+      const session = consumerSessions.find((item) => item.id === sessionId);
+      if (!session) return;
+      await client.consumers.unsubscribe(sessionId, topic);
+      setInactiveConsumerTopics((current) => {
+        const item = { key: `${session.brokerProfileId}:${topic}`, topic, brokerProfileId: session.brokerProfileId };
+        const next = [...current.filter((entry) => entry.key !== item.key), item];
+        localStorage.setItem("mqtt-postwoman.inactiveConsumerTopics", JSON.stringify(next));
+        return next;
+      });
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to unsubscribe");
+    }
+  };
+
+  const subscribeSavedTopic = async (item: InactiveConsumerTopic) => {
+    try {
+      await client.consumers.create({ name: "consumer", brokerProfileId: item.brokerProfileId, topics: [item.topic], qos: consumerQos });
+      setInactiveConsumerTopics((current) => {
+        const next = current.filter((entry) => entry.key !== item.key);
+        localStorage.setItem("mqtt-postwoman.inactiveConsumerTopics", JSON.stringify(next));
+        return next;
+      });
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to subscribe");
+    }
+  };
+
+  const deleteSavedTopic = (key: string) => {
+    setInactiveConsumerTopics((current) => {
+      const next = current.filter((item) => item.key !== key);
+      localStorage.setItem("mqtt-postwoman.inactiveConsumerTopics", JSON.stringify(next));
+      return next;
+    });
   };
 
   const saveEnvironment = async () => {
@@ -572,6 +645,7 @@ export default function App() {
   };
 
   const saveBroker = async () => {
+    setConnectionTestMessage(null);
     const { id: brokerId, ...brokerPayload } = brokerDraft;
     const payload = {
       ...brokerPayload,
@@ -606,7 +680,6 @@ export default function App() {
       await refresh();
       if (status.connected) {
         setActiveConnectionId(brokerId);
-        toast.success("Connection connected successfully.");
       } else {
         toast.error(status.lastError ?? "Unable to connect");
       }
@@ -617,6 +690,7 @@ export default function App() {
 
   const testBroker = async () => {
     setError("");
+    setConnectionTestMessage(null);
     try {
       const { id: _brokerId, ...brokerPayload } = brokerDraft;
       await client.brokers.test({
@@ -629,18 +703,20 @@ export default function App() {
         clientCert: brokerDraft.clientCert || null,
         clientKey: brokerDraft.clientKey || null,
       });
-      toast.success("Test connection succeeded.");
+      setConnectionTestMessage({ type: "success", text: "Test connection succeeded." });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Unable to test connection");
+      setConnectionTestMessage({ type: "error", text: err instanceof Error ? err.message : "Unable to test connection" });
     }
   };
 
   const openNewConnection = () => {
     setBrokerDraft(emptyBrokerDraft());
+    setConnectionTestMessage(null);
     setConnectionView("form");
   };
 
   const openEditConnection = (broker: BrokerProfileRow) => {
+    setConnectionTestMessage(null);
     setBrokerDraft({
       id: broker.id,
       name: broker.name,
@@ -663,6 +739,7 @@ export default function App() {
   const cancelConnectionForm = () => {
     setConnectionView("list");
     setBrokerDraft(emptyBrokerDraft());
+    setConnectionTestMessage(null);
   };
 
   const disconnectBroker = async (brokerId: string) => {
@@ -785,6 +862,9 @@ export default function App() {
                           onClick={() => selectRequest(request)}
                         >
                           <span className="request-method">MQTT</span>
+                          {isRequestModified(request, requestDrafts[request.id]) && (
+                            <span className="request-modified-dot" aria-label="Modified" title="Modified" />
+                          )}
                           <span className="request-tree-name">{request.name}</span>
                         </button>
                       ))}
@@ -810,10 +890,15 @@ export default function App() {
           </div>
           <div className="topbar-actions">
             <div className="status-row">
-              <span>{brokers.length} connections</span>
-              <span>{environments.length} envs</span>
-              <span>{helpers.length} helpers</span>
-              <span>{activeConnection ? `active: ${activeConnection.name}` : "no active connection"}</span>
+              {activeConnection ? (
+                <span className="connection-status-pill">
+                  <strong>{activeConnection.name}</strong>
+                  <i className={activeConnectionStatus?.connected ? "status-dot connected" : "status-dot disconnected"} />
+                  {activeConnectionStatus?.connected ? "Connected" : "Disconnected"}
+                </span>
+              ) : (
+                <span className="connection-status-pill no-connection">No Connection</span>
+              )}
             </div>
             <div className="tab-row">
               <button className={mainTab === "publishers" ? "active" : ""} onClick={() => setMainTab("publishers")}>
@@ -848,12 +933,15 @@ export default function App() {
             )}
             <div className="request-toolbar">
               <div>
-                <input
-                  className="request-name-input"
-                  aria-label="Request name"
-                  value={draft.name}
-                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                />
+                <div className="request-name-line">
+                  <input
+                    className="request-name-input"
+                    aria-label="Request name"
+                    value={draft.name}
+                    onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                  />
+                  {selectedRequestModified && <span className="modified-label">(Modified)</span>}
+                </div>
                 <div className="card-sub">MQTT message</div>
               </div>
               <div className="button-row">
@@ -897,7 +985,6 @@ export default function App() {
               </div>
               <div className="request-send-actions">
                 <button onClick={publishRequest} className="publish-button">Publish</button>
-                <button onClick={batchPublish}>Batch x{batchCount}</button>
               </div>
             </div>
 
@@ -911,11 +998,15 @@ export default function App() {
 
             <div className="request-controls">
               <label>
-                Broker
-                <select value={draft.brokerProfileId} onChange={(event) => setDraft({ ...draft, brokerProfileId: event.target.value })}>
-                  <option value="">Select broker</option>
-                  {brokers.map((broker) => <option key={broker.id} value={broker.id}>{broker.name}</option>)}
-                </select>
+                Batch
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={batchCount}
+                  onChange={(event) => setBatchCount(Math.min(1000, Math.max(1, Number(event.target.value) || 1)))}
+                />
               </label>
               <label>
                 Environment
@@ -991,12 +1082,21 @@ export default function App() {
                     <span>Active sessions</span>
                   </div>
                   <div className="session-list">
-                    {consumerSessions.map((session) => (
-                      <div key={session.id} className="session-row">
-                        <div>
-                          <strong>{JSON.parse(session.topicsJson).join(", ")}</strong>
+                    {consumerSessions.flatMap((session) =>
+                      (JSON.parse(session.topicsJson) as string[]).map((topic) => (
+                        <div key={`${session.id}:${topic}`} className="session-row consumer-session-topic" style={{ borderLeftColor: getTopicColor(topic) }}>
+                          <strong>{topic}</strong>
+                          <button onClick={() => unsubscribeTopic(session.id, topic)}>Unsubscribe</button>
                         </div>
-                        <button onClick={() => client.consumers.remove(session.id).then(refresh)}>Stop</button>
+                      )),
+                    )}
+                    {inactiveConsumerTopics.filter((item) => !activeTopicKeys.has(item.key)).map((item) => (
+                      <div key={`inactive:${item.key}`} className="session-row consumer-session-topic inactive-session" style={{ borderLeftColor: getTopicColor(item.topic) }}>
+                        <strong>{item.topic}</strong>
+                        <div className="button-row">
+                          <button onClick={() => subscribeSavedTopic(item)}>Subscribe</button>
+                          <button className="danger" onClick={() => deleteSavedTopic(item.key)}>Delete</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1022,7 +1122,10 @@ export default function App() {
               <div className="stack">
                 <div className="card-section">
                   <div className="section-head">
-                    <span>Publish and consume log</span>
+                    <div className="section-title-stack">
+                      <span>Publish and consume log</span>
+                      <small>(publish: {publishLogCount}, consume: {consumeLogCount})</small>
+                    </div>
                     <button onClick={clearHistory} className="danger" disabled={!logs.length}>Clear</button>
                   </div>
                   <div className="log-list">
@@ -1291,12 +1394,21 @@ export default function App() {
                     <button onClick={startConsumer} className="primary">Subscribe</button>
                   </div>
                   <label>
-                    Name
-                    <input value={consumerName} onChange={(event) => setConsumerName(event.target.value)} />
-                  </label>
-                  <label>
                     Topics comma separated
-                    <input value={consumerTopics} onChange={(event) => setConsumerTopics(event.target.value)} />
+                    <div className="topic-input-with-color">
+                      <input list="mqtt-topic-suggestions" value={consumerTopics} onChange={(event) => setConsumerTopics(event.target.value)} />
+                      <input
+                        className="topic-color-picker"
+                        type="color"
+                        value={consumerTopicColor}
+                        aria-label="Choose topic color"
+                        title="Choose topic color"
+                        onChange={(event) => {
+                          setConsumerTopicColor(event.target.value);
+                          localStorage.setItem("mqtt-postwoman.consumerTopicColor", event.target.value);
+                        }}
+                      />
+                    </div>
                   </label>
                   <label>
                     QoS
@@ -1310,13 +1422,21 @@ export default function App() {
                 <div className="card-section">
                   <div className="section-head"><span>Active sessions</span></div>
                   <div className="session-list">
-                    {consumerSessions.map((session) => (
-                      <div key={session.id} className="session-row">
-                        <div>
-                          <strong>{session.name}</strong>
-                          <small>{JSON.parse(session.topicsJson).join(", ")}</small>
+                    {consumerSessions.flatMap((session) =>
+                      (JSON.parse(session.topicsJson) as string[]).map((topic) => (
+                        <div key={`${session.id}:${topic}`} className="session-row consumer-session-topic" style={{ borderLeftColor: getTopicColor(topic) }}>
+                          <strong>{topic}</strong>
+                          <button onClick={() => unsubscribeTopic(session.id, topic)}>Unsubscribe</button>
                         </div>
-                        <button onClick={() => client.consumers.remove(session.id).then(refresh)}>Stop</button>
+                      )),
+                    )}
+                    {inactiveConsumerTopics.filter((item) => !activeTopicKeys.has(item.key)).map((item) => (
+                      <div key={`inactive:${item.key}`} className="session-row consumer-session-topic inactive-session" style={{ borderLeftColor: getTopicColor(item.topic) }}>
+                        <strong>{item.topic}</strong>
+                        <div className="button-row">
+                          <button onClick={() => subscribeSavedTopic(item)}>Subscribe</button>
+                          <button className="danger" onClick={() => deleteSavedTopic(item.key)}>Delete</button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1397,13 +1517,6 @@ export default function App() {
                   <div className="connections-form">
                   <div className="section-head">
                     <span>{brokerDraft.id ? "Edit connection" : "Create connection"}</span>
-                    <div className="button-row">
-                      <button onClick={testBroker}>Test connection</button>
-                      <button onClick={saveBroker} className="primary">
-                        Save
-                      </button>
-                      <button onClick={cancelConnectionForm}>Cancel</button>
-                    </div>
                   </div>
                   <div className="form-grid">
                     <label>
@@ -1453,11 +1566,19 @@ export default function App() {
                       />
                     </label>
                   </div>
-                  <div className="button-row">
+                  <div className="connection-form-actions">
+                    <button onClick={testBroker}>Test connection</button>
+                    <button onClick={saveBroker} className="primary">Save</button>
+                    <button onClick={cancelConnectionForm}>Cancel</button>
                     <button onClick={deleteBroker} className="danger" disabled={!brokerDraft.id}>
                       Delete current
                     </button>
                   </div>
+                  {connectionTestMessage && (
+                    <div className={`connection-test-alert ${connectionTestMessage.type}`} role="alert">
+                      {connectionTestMessage.text}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

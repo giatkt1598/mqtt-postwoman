@@ -256,6 +256,27 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     res.status(204).end();
   });
 
+  router.delete("/consumer-sessions/:id/topics", async (req, res) => {
+    const schema = z.object({ topic: z.string().min(1) });
+    try {
+      const input = schema.parse(req.body);
+      const updated = await runtime.unsubscribeConsumerTopic(req.params.id, input.topic);
+      if (!updated) {
+        res.status(404).json({ message: "Consumer session not found" });
+        return;
+      }
+      if (!JSON.parse(updated.topicsJson).length) {
+        deleteConsumerSession(db.raw, req.params.id);
+        res.status(204).end();
+        return;
+      }
+      res.json(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to unsubscribe";
+      res.status(400).json({ message });
+    }
+  });
+
   const publishSchema = z.object({
     requestId: z.string().optional(),
     brokerProfileId: z.string().optional(),
