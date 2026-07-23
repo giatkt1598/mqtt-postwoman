@@ -23,6 +23,7 @@ type ConnectionView = "list" | "form";
 type CollectionModal = "create" | "edit" | null;
 type PayloadFormat = "raw" | "xml" | "json";
 type InactiveConsumerTopic = { key: string; topic: string; brokerProfileId: string };
+type DeleteConfirmation = { title: string; message: string; onConfirm: () => void | Promise<void> };
 
 const emptyDraft = (collectionId = "", brokerProfileId = "", environmentId = ""): DraftRequest => ({
   collectionId,
@@ -69,6 +70,8 @@ const emptyBrokerDraft = () => ({
   host: "localhost",
   port: 1883,
   protocol: "mqtt",
+  validateCertificate: true,
+  encryption: false,
   username: "",
   password: "",
   clientId: "",
@@ -243,6 +246,7 @@ export default function App() {
   const [envDraft, setEnvDraft] = useState({ id: "", name: "local", variablesJson: "{\n  \"env\": \"local\"\n}" });
   const [brokerDraft, setBrokerDraft] = useState(emptyBrokerDraft());
   const [connectionTestMessage, setConnectionTestMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [connectionTestPending, setConnectionTestPending] = useState(false);
   const [helperDraft, setHelperDraft] = useState({
     id: "",
     name: "requestId",
@@ -253,6 +257,8 @@ export default function App() {
   const [unreadConsumerMessages, setUnreadConsumerMessages] = useState(0);
   const [historyLogs, setHistoryLogs] = useState<MessageLogRow[]>([]);
   const [error, setError] = useState<string>("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
+  const [topicValidationError, setTopicValidationError] = useState(false);
 
   const refresh = async () => {
     const [data, statuses, fetchedLogs] = await Promise.all([client.bootstrap(), client.brokers.statuses(), client.logs.list()]);
@@ -352,7 +358,7 @@ export default function App() {
                     ? {
                         ...item,
                         connected: status.status === "connected" ? true : status.status === "closed" || status.status === "error" ? false : item.connected,
-                        lastError: status.status === "error" ? status.error ?? "Connection failed" : status.status === "connected" ? null : item.lastError,
+                        lastError: status.status === "error" ? status.error?.trim() || "Connection failed" : status.status === "connected" ? null : item.lastError,
                       }
                     : item,
                 )
@@ -361,7 +367,7 @@ export default function App() {
                     profileId: status.profileId,
                     connected: status.status === "connected",
                     refCount: 0,
-                    lastError: status.status === "error" ? status.error ?? "Connection failed" : null,
+                    lastError: status.status === "error" ? status.error?.trim() || "Connection failed" : null,
                   },
                 ],
           );
@@ -452,6 +458,7 @@ export default function App() {
     }
     setSelectedCollectionId(request.collectionId);
     setSelectedRequestId(request.id);
+    setTopicValidationError(false);
     setDraft(requestDrafts[request.id] ?? requestToDraft(request));
     setMainTab("publishers");
   };
@@ -474,7 +481,7 @@ export default function App() {
 
   const deleteCollection = async (collection?: CollectionRow) => {
     const collectionId = collection?.id ?? collectionDraft.id;
-    if (!collectionId || !window.confirm("Delete this collection and its requests?")) return;
+    if (!collectionId) return;
     await client.collections.remove(collectionId);
     setFavoriteCollectionIds((current) => {
       const next = current.filter((id) => id !== collectionId);
@@ -507,6 +514,21 @@ export default function App() {
     setCollectionModal("edit");
   };
 
+  const askDeleteConfirmation = (title: string, message: string, onConfirm: () => void | Promise<void>) => {
+    setDeleteConfirmation({ title, message, onConfirm });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmation) return;
+    const { onConfirm } = deleteConfirmation;
+    setDeleteConfirmation(null);
+    try {
+      await onConfirm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete");
+    }
+  };
+
   const addRequestToCollection = async (collection: CollectionRow) => {
     selectCollection(collection);
     const { id: _draftId, ...newRequestPayload } = emptyDraft(collection.id, fallbackConnectionId, environments[0]?.id ?? "");
@@ -519,6 +541,7 @@ export default function App() {
     await refresh();
     setSelectedCollectionId(collection.id);
     setSelectedRequestId(saved.id);
+    setTopicValidationError(false);
     setDraft(requestToDraft(saved));
     setCollectionMenuId(null);
   };
@@ -566,9 +589,20 @@ export default function App() {
   };
 
   const publishRequest = async () => {
+    const hasConnectedBroker = Boolean(activeConnectionId && brokerStatuses.some((status) => status.profileId === activeConnectionId && status.connected));
+    const hasTopic = Boolean(draft.topic.trim());
+    setTopicValidationError(!hasTopic);
+    if (!hasConnectedBroker) {
+      toast.error("Connect to a broker before publishing.");
+      return;
+    }
+    if (!hasTopic) {
+      toast.error("Enter a topic before publishing.");
+      return;
+    }
     await client.batchPublish({
       requestId: draft.id,
-      brokerProfileId: activeConnectionId || draft.brokerProfileId || undefined,
+      brokerProfileId: activeConnectionId,
       topic: draft.topic,
       payloadTemplate: draft.payloadTemplate,
       count: batchCount,
@@ -589,9 +623,10 @@ export default function App() {
 
   const startConsumer = async () => {
     const topics = joinTopics(consumerTopics);
-    const targetBroker = draft.brokerProfileId || activeConnectionId || brokers[0]?.id;
-    if (!targetBroker) {
-      toast.error("Select or connect a broker before subscribing.");
+    const targetBroker = activeConnectionId;
+    const hasConnectedBroker = Boolean(targetBroker && brokerStatuses.some((status) => status.profileId === targetBroker && status.connected));
+    if (!hasConnectedBroker) {
+      toast.error("Connect to a broker before subscribing.");
       return;
     }
     if (!topics.length) {
@@ -645,7 +680,18 @@ export default function App() {
 
   const subscribeSavedTopic = async (item: InactiveConsumerTopic) => {
     try {
-      await client.consumers.create({ name: "consumer", brokerProfileId: item.brokerProfileId, topics: [item.topic], qos: consumerQos });
+      const targetBroker = activeConnectionId;
+      const hasConnectedBroker = Boolean(targetBroker && brokerStatuses.some((status) => status.profileId === targetBroker && status.connected));
+      if (!hasConnectedBroker) {
+        toast.error("Connect to a broker before subscribing.");
+        return;
+      }
+      await client.consumers.create({ name: "consumer", brokerProfileId: targetBroker, topics: [item.topic], qos: consumerQos });
+      setTopicColors((current) => {
+        const next = { ...current, [item.topic]: getTopicColor(item.topic) };
+        localStorage.setItem("mqtt-postwoman.topicColors", JSON.stringify(next));
+        return next;
+      });
       setInactiveConsumerTopics((current) => {
         const next = current.filter((entry) => entry.key !== item.key);
         localStorage.setItem("mqtt-postwoman.inactiveConsumerTopics", JSON.stringify(next));
@@ -694,6 +740,8 @@ export default function App() {
     const payload = {
       ...brokerPayload,
       name: brokerDraft.name,
+      validateCertificate: brokerDraft.validateCertificate,
+      encryption: brokerDraft.encryption,
       username: brokerDraft.username || null,
       password: brokerDraft.password || null,
       clientId: brokerDraft.clientId || `mqtt-postwoman-${Date.now()}`,
@@ -725,21 +773,24 @@ export default function App() {
       if (status.connected) {
         setActiveConnectionId(brokerId);
       } else {
-        toast.error(status.lastError ?? "Unable to connect");
+        toast.error(status.lastError?.trim() || "Unable to connect to MQTT broker");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Unable to connect");
+      toast.error(err instanceof Error && err.message.trim() ? err.message : "Unable to connect to MQTT broker");
     }
   };
 
   const testBroker = async () => {
     setError("");
     setConnectionTestMessage(null);
+    setConnectionTestPending(true);
     try {
       const { id: _brokerId, ...brokerPayload } = brokerDraft;
       await client.brokers.test({
         ...brokerPayload,
         name: brokerDraft.name,
+        validateCertificate: brokerDraft.validateCertificate,
+        encryption: brokerDraft.encryption,
         username: brokerDraft.username || null,
         password: brokerDraft.password || null,
         clientId: brokerDraft.clientId || undefined,
@@ -749,7 +800,9 @@ export default function App() {
       });
       setConnectionTestMessage({ type: "success", text: "Test connection succeeded." });
     } catch (err) {
-      setConnectionTestMessage({ type: "error", text: err instanceof Error ? err.message : "Unable to test connection" });
+      setConnectionTestMessage({ type: "error", text: err instanceof Error && err.message.trim() ? err.message : "Unable to test connection" });
+    } finally {
+      setConnectionTestPending(false);
     }
   };
 
@@ -766,7 +819,9 @@ export default function App() {
       name: broker.name,
       host: broker.host,
       port: broker.port,
-      protocol: broker.protocol,
+      protocol: broker.protocol === "ws" || broker.protocol === "wss" ? "ws" : "mqtt",
+      validateCertificate: broker.validateCertificate !== 0,
+      encryption: broker.encryption !== 0 || broker.protocol === "mqtts" || broker.protocol === "wss",
       username: broker.username ?? "",
       password: broker.password ?? "",
       clientId: broker.clientId,
@@ -892,7 +947,12 @@ export default function App() {
                       {collectionMenuId === collection.id && (
                         <div className="collection-menu">
                           <button onClick={() => openEditCollection(collection)}>Edit</button>
-                          <button className="danger-text" onClick={() => deleteCollection(collection)}>Delete</button>
+                          <button
+                            className="danger-text"
+                            onClick={() => askDeleteConfirmation("Delete collection", "Delete this collection and all of its requests?", () => deleteCollection(collection))}
+                          >
+                            Delete
+                          </button>
                         </div>
                       )}
                     </div>
@@ -986,14 +1046,26 @@ export default function App() {
               </div>
               <div className="button-row">
                 <button onClick={saveRequest}>Save</button>
-                <button onClick={deleteRequest} className="danger">Delete</button>
+                <button
+                  onClick={() => askDeleteConfirmation("Delete request", "Delete this MQTT request?", deleteRequest)}
+                  className="danger"
+                >
+                  Delete
+                </button>
               </div>
             </div>
 
-            <div className="request-topic-row">
+            <div className={`request-topic-row ${topicValidationError ? "topic-invalid" : ""}`}>
               <label className="topic-field">
                 Topic
-                <TopicAutocomplete value={draft.topic} topics={allTopics} onChange={(topic) => setDraft({ ...draft, topic })} />
+                <TopicAutocomplete
+                  value={draft.topic}
+                  topics={allTopics}
+                  onChange={(topic) => {
+                    setTopicValidationError(false);
+                    setDraft({ ...draft, topic });
+                  }}
+                />
               </label>
               <button className="topic-clear" aria-label="Clear topic" title="Clear topic" onClick={() => setDraft({ ...draft, topic: "" })}>
                 ×
@@ -1135,7 +1207,12 @@ export default function App() {
                         <strong>{item.topic}</strong>
                         <div className="button-row">
                           <button onClick={() => subscribeSavedTopic(item)}>Subscribe</button>
-                          <button className="danger" onClick={() => deleteSavedTopic(item.key)}>Delete</button>
+                          <button
+                            className="danger"
+                            onClick={() => askDeleteConfirmation("Delete saved topic", `Delete saved topic "${item.topic}"?`, () => deleteSavedTopic(item.key))}
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1234,7 +1311,10 @@ export default function App() {
                         <button onClick={saveEnvironment} className="primary">
                           Save env
                         </button>
-                        <button onClick={deleteEnvironment} className="danger">
+                        <button
+                          onClick={() => askDeleteConfirmation("Delete environment", "Delete this environment?", deleteEnvironment)}
+                          className="danger"
+                        >
                           Delete
                         </button>
                       </div>
@@ -1274,7 +1354,10 @@ export default function App() {
                         <button onClick={saveBroker} className="primary">
                           Save broker
                         </button>
-                        <button onClick={deleteBroker} className="danger">
+                        <button
+                          onClick={() => askDeleteConfirmation("Delete broker", "Delete this broker connection?", deleteBroker)}
+                          className="danger"
+                        >
                           Delete
                         </button>
                       </div>
@@ -1294,7 +1377,10 @@ export default function App() {
                       </label>
                       <label>
                         Protocol
-                        <input value={brokerDraft.protocol} onChange={(event) => setBrokerDraft({ ...brokerDraft, protocol: event.target.value })} />
+                        <select value={brokerDraft.protocol} onChange={(event) => setBrokerDraft({ ...brokerDraft, protocol: event.target.value })}>
+                          <option value="mqtt">mqtt://</option>
+                          <option value="ws">ws://</option>
+                        </select>
                       </label>
                       <label>
                         Client ID
@@ -1318,6 +1404,14 @@ export default function App() {
                         <input type="checkbox" checked={brokerDraft.clean} onChange={(event) => setBrokerDraft({ ...brokerDraft, clean: event.target.checked })} />
                         Clean session
                       </label>
+                      <label className="inline switch-control">
+                        <input type="checkbox" checked={brokerDraft.validateCertificate} onChange={(event) => setBrokerDraft({ ...brokerDraft, validateCertificate: event.target.checked })} />
+                        Validate Certificate
+                      </label>
+                      <label className="inline switch-control">
+                        <input type="checkbox" checked={brokerDraft.encryption} onChange={(event) => setBrokerDraft({ ...brokerDraft, encryption: event.target.checked })} />
+                        Encryption (TLS)
+                      </label>
                       <label className="inline">
                         Reconnect period
                         <input
@@ -1338,7 +1432,9 @@ export default function App() {
                               name: broker.name,
                               host: broker.host,
                               port: broker.port,
-                              protocol: broker.protocol,
+                              protocol: broker.protocol === "ws" || broker.protocol === "wss" ? "ws" : "mqtt",
+                              validateCertificate: broker.validateCertificate !== 0,
+                              encryption: broker.encryption !== 0 || broker.protocol === "mqtts" || broker.protocol === "wss",
                               username: broker.username ?? "",
                               password: broker.password ?? "",
                               clientId: broker.clientId,
@@ -1367,7 +1463,10 @@ export default function App() {
                         <button onClick={saveHelper} className="primary">
                           Save helper
                         </button>
-                        <button onClick={deleteHelper} className="danger">
+                        <button
+                          onClick={() => askDeleteConfirmation("Delete helper", "Delete this template helper?", deleteHelper)}
+                          className="danger"
+                        >
                           Delete
                         </button>
                       </div>
@@ -1475,7 +1574,12 @@ export default function App() {
                         <strong>{item.topic}</strong>
                         <div className="button-row">
                           <button onClick={() => subscribeSavedTopic(item)}>Subscribe</button>
-                          <button className="danger" onClick={() => deleteSavedTopic(item.key)}>Delete</button>
+                          <button
+                            className="danger"
+                            onClick={() => askDeleteConfirmation("Delete saved topic", `Delete saved topic "${item.topic}"?`, () => deleteSavedTopic(item.key))}
+                          >
+                            Delete
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1571,9 +1675,12 @@ export default function App() {
                       Port
                       <input type="number" value={brokerDraft.port} onChange={(event) => setBrokerDraft({ ...brokerDraft, port: Number(event.target.value) })} />
                     </label>
-                    <label>
-                      Protocol
-                      <input value={brokerDraft.protocol} onChange={(event) => setBrokerDraft({ ...brokerDraft, protocol: event.target.value })} />
+                      <label>
+                        Protocol
+                        <select value={brokerDraft.protocol} onChange={(event) => setBrokerDraft({ ...brokerDraft, protocol: event.target.value })}>
+                          <option value="mqtt">mqtt://</option>
+                          <option value="ws">ws://</option>
+                        </select>
                     </label>
                     <label>
                       Client ID
@@ -1597,6 +1704,14 @@ export default function App() {
                       <input type="checkbox" checked={brokerDraft.clean} onChange={(event) => setBrokerDraft({ ...brokerDraft, clean: event.target.checked })} />
                       Clean session
                     </label>
+                    <label className="inline switch-control">
+                      <input type="checkbox" checked={brokerDraft.validateCertificate} onChange={(event) => setBrokerDraft({ ...brokerDraft, validateCertificate: event.target.checked })} />
+                      Validate Certificate
+                    </label>
+                    <label className="inline switch-control">
+                      <input type="checkbox" checked={brokerDraft.encryption} onChange={(event) => setBrokerDraft({ ...brokerDraft, encryption: event.target.checked })} />
+                      Encryption (TLS)
+                    </label>
                     <label className="inline">
                       Reconnect period
                       <input
@@ -1607,10 +1722,16 @@ export default function App() {
                     </label>
                   </div>
                   <div className="connection-form-actions">
-                    <button onClick={testBroker}>Test connection</button>
+                    <button onClick={testBroker} disabled={connectionTestPending}>
+                      {connectionTestPending ? "Testing..." : "Test connection"}
+                    </button>
                     <button onClick={saveBroker} className="primary">Save</button>
                     <button onClick={cancelConnectionForm}>Cancel</button>
-                    <button onClick={deleteBroker} className="danger" disabled={!brokerDraft.id}>
+                    <button
+                      onClick={() => askDeleteConfirmation("Delete connection", "Delete this connection?", deleteBroker)}
+                      className="danger"
+                      disabled={!brokerDraft.id}
+                    >
                       Delete current
                     </button>
                   </div>
@@ -1658,6 +1779,20 @@ export default function App() {
               <button className="primary" onClick={saveCollection} disabled={!collectionDraft.name.trim()}>
                 {collectionModal === "create" ? "Create collection" : "Save changes"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteConfirmation && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setDeleteConfirmation(null)}>
+          <div className="modal-card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div>
+              <div id="delete-modal-title" className="card-title">{deleteConfirmation.title}</div>
+              <div className="card-sub">{deleteConfirmation.message}</div>
+            </div>
+            <div className="button-row modal-actions">
+              <button onClick={() => setDeleteConfirmation(null)}>Cancel</button>
+              <button className="danger" onClick={() => void confirmDelete()}>Delete</button>
             </div>
           </div>
         </div>

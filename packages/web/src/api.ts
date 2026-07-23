@@ -23,7 +23,8 @@ const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(error.message ?? response.statusText);
+    const message = typeof error.message === "string" && error.message.trim() ? error.message : response.statusText || "Request failed";
+    throw new Error(message);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

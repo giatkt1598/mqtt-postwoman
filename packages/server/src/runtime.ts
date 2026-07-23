@@ -36,6 +36,8 @@ type BrokerConnectionConfig = {
   host: string;
   port: number;
   protocol: string;
+  validateCertificate?: boolean | number;
+  encryption?: boolean | number;
   username?: string | null;
   password?: string | null;
   clientId?: string;
@@ -46,6 +48,17 @@ type BrokerConnectionConfig = {
   clientCert?: string | null;
   clientKey?: string | null;
 };
+
+function brokerErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error && typeof error === "object") {
+    const details = error as { message?: unknown; code?: unknown; syscall?: unknown; address?: unknown; port?: unknown };
+    if (typeof details.message === "string" && details.message.trim()) return details.message;
+    const context = [details.code, details.syscall, details.address, details.port].filter(Boolean).join(" ");
+    if (context) return context;
+  }
+  return fallback;
+}
 
 export interface BrokerConnectionStatus {
   profileId: string;
@@ -98,12 +111,26 @@ export class RuntimeManager {
   }
 
   async testBrokerConfig(config: BrokerConnectionConfig) {
-    const url = `${config.protocol}://${config.host}:${config.port}`;
-    const client = mqtt.connect(url, this.buildOptionsFromConnection(config));
+    const url = `${this.transportProtocol(config)}://${config.host}:${config.port}`;
+    const client = mqtt.connect(url, {
+      ...this.buildOptionsFromConnection(config),
+      reconnectPeriod: 0,
+      connectTimeout: 10000,
+    });
     try {
       await new Promise<void>((resolve, reject) => {
-        client.once("connect", () => resolve());
-        client.once("error", (error) => reject(error));
+        let settled = false;
+        let timeout: NodeJS.Timeout;
+        const finish = (handler: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          handler();
+        };
+        timeout = setTimeout(() => finish(() => reject(new Error("MQTT connection timed out after 10 seconds"))), 10000);
+        client.once("connect", () => finish(resolve));
+        client.once("error", (error) => finish(() => reject(new Error(brokerErrorMessage(error, "Unable to test MQTT connection")))));
+        client.once("close", () => finish(() => reject(new Error("MQTT connection closed before it was established"))));
       });
       return { ok: true };
     } finally {
@@ -143,16 +170,28 @@ export class RuntimeManager {
       clean: Boolean(profile.clean ?? true),
       keepalive: profile.keepAlive ?? 30,
       reconnectPeriod: profile.reconnectPeriod ?? 1000,
+      connectTimeout: 10000,
     };
     if (profile.username) options.username = profile.username;
     if (profile.password) options.password = profile.password;
-    if (profile.protocol === "mqtts") {
-      options.protocol = "mqtts";
+    if (this.isEncrypted(profile)) {
+      options.protocol = profile.protocol === "ws" || profile.protocol === "wss" ? "wss" : "mqtts";
+      options.rejectUnauthorized = Boolean(profile.validateCertificate ?? true);
       if (profile.caCert) options.ca = profile.caCert;
       if (profile.clientCert) options.cert = profile.clientCert;
       if (profile.clientKey) options.key = profile.clientKey;
     }
     return options;
+  }
+
+  private isEncrypted(profile: BrokerConnectionConfig) {
+    return Boolean(profile.encryption) || profile.protocol === "mqtts" || profile.protocol === "wss";
+  }
+
+  private transportProtocol(profile: BrokerConnectionConfig) {
+    const protocol = profile.protocol.replace("://", "");
+    if (this.isEncrypted(profile)) return protocol === "ws" || protocol === "wss" ? "wss" : "mqtts";
+    return protocol === "ws" ? "ws" : "mqtt";
   }
 
   private buildOptions(profile: ReturnType<typeof getBrokerProfile>): IClientOptions {
@@ -175,7 +214,7 @@ export class RuntimeManager {
       return existing;
     }
 
-    const url = `${profile.protocol}://${profile.host}:${profile.port}`;
+    const url = `${this.transportProtocol(profile)}://${profile.host}:${profile.port}`;
     const client = mqtt.connect(url, this.buildOptions(profile));
 
     const broker: ActiveBroker = {
@@ -188,19 +227,38 @@ export class RuntimeManager {
     };
 
     broker.ready = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeout: NodeJS.Timeout;
       const onConnect = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         broker.connected = true;
         broker.lastError = null;
         this.broadcast({ type: "broker.status", payload: { profileId, status: "connected" } });
         resolve();
       };
       const onError = (error: Error) => {
-        broker.lastError = error.message;
-        this.broadcast({ type: "broker.status", payload: { profileId, status: "error", error: error.message } });
-        reject(error);
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        const message = brokerErrorMessage(error, "Unable to connect to MQTT broker");
+        broker.lastError = message;
+        this.broadcast({ type: "broker.status", payload: { profileId, status: "error", error: message } });
+        reject(new Error(message));
+      };
+      const onInitialClose = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        const message = "MQTT connection closed before it was established";
+        broker.lastError = message;
+        reject(new Error(message));
       };
       client.once("connect", onConnect);
       client.once("error", onError);
+      client.once("close", onInitialClose);
+      timeout = setTimeout(() => onError(new Error("MQTT connection timed out after 10 seconds")), 10000);
       client.on("reconnect", () => {
         this.broadcast({ type: "broker.status", payload: { profileId, status: "reconnecting" } });
       });

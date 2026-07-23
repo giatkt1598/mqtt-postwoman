@@ -67,7 +67,9 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     name: z.string().min(1),
     host: z.string().min(1),
     port: z.number().int().min(1).max(65535),
-    protocol: z.string().default("mqtt"),
+    protocol: z.enum(["mqtt", "ws", "mqtts", "wss"]).default("mqtt"),
+    validateCertificate: z.boolean().default(true),
+    encryption: z.boolean().default(false),
     username: z.string().optional().nullable(),
     password: z.string().optional().nullable(),
     clientId: z.string().optional(),
@@ -166,7 +168,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       const status = await runtime.connectBroker(req.params.id);
       res.json(status);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to connect";
+      const message = error instanceof Error && error.message.trim() ? error.message : "Unable to connect to MQTT broker";
       res.status(400).json({ message });
     }
   });
@@ -175,7 +177,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       const result = await runtime.testBrokerConnection(req.params.id);
       res.json(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to test connection";
+      const message = error instanceof Error && error.message.trim() ? error.message : "Unable to test connection";
       res.status(400).json({ message });
     }
   });
@@ -184,7 +186,9 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       name: z.string().optional(),
       host: z.string().min(1),
       port: z.number().int().min(1).max(65535),
-      protocol: z.string().default("mqtt"),
+      protocol: z.enum(["mqtt", "ws", "mqtts", "wss"]).default("mqtt"),
+      validateCertificate: z.boolean().default(true),
+      encryption: z.boolean().default(false),
       username: z.string().optional().nullable(),
       password: z.string().optional().nullable(),
       clientId: z.string().optional(),
@@ -200,7 +204,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       const result = await runtime.testBrokerConfig(input);
       res.json(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to test connection";
+      const message = error instanceof Error && error.message.trim() ? error.message : "Unable to test connection";
       res.status(400).json({ message });
     }
   });

@@ -36,6 +36,8 @@ export interface BrokerProfileRow {
   host: string;
   port: number;
   protocol: string;
+  validateCertificate: number;
+  encryption: number;
   username: string | null;
   password: string | null;
   clientId: string;
@@ -97,4 +99,3 @@ export interface BootstrapState {
   consumerSessions: ConsumerSessionRow[];
   logs: MessageLogRow[];
 }
-

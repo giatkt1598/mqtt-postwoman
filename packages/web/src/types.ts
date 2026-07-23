@@ -34,6 +34,8 @@ export interface BrokerProfileRow {
   host: string;
   port: number;
   protocol: string;
+  validateCertificate: number;
+  encryption: number;
   username: string | null;
   password: string | null;
   clientId: string;

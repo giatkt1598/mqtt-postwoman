@@ -50,6 +50,8 @@ export function openDatabase(): AppDatabase {
           host TEXT NOT NULL,
           port INTEGER NOT NULL,
           protocol TEXT NOT NULL,
+          validateCertificate INTEGER NOT NULL DEFAULT 1,
+          encryption INTEGER NOT NULL DEFAULT 0,
           username TEXT,
           password TEXT,
           clientId TEXT NOT NULL,
@@ -113,6 +115,13 @@ export function openDatabase(): AppDatabase {
           createdAt TEXT NOT NULL
         );
       `);
+      const brokerColumns = raw.prepare("PRAGMA table_info(broker_profiles)").all() as Array<{ name: string }>;
+      if (!brokerColumns.some((column) => column.name === "validateCertificate")) {
+        raw.exec("ALTER TABLE broker_profiles ADD COLUMN validateCertificate INTEGER NOT NULL DEFAULT 1");
+      }
+      if (!brokerColumns.some((column) => column.name === "encryption")) {
+        raw.exec("ALTER TABLE broker_profiles ADD COLUMN encryption INTEGER NOT NULL DEFAULT 0");
+      }
     },
   };
 }
@@ -301,6 +310,8 @@ export function upsertBrokerProfile(
     host: string;
     port: number;
     protocol?: string;
+    validateCertificate?: boolean | number;
+    encryption?: boolean | number;
     username?: string | null;
     password?: string | null;
     clientId?: string;
@@ -316,17 +327,21 @@ export function upsertBrokerProfile(
   const timestamp = nowIso();
   const existing = db.prepare("SELECT id FROM broker_profiles WHERE id = ?").get(id);
   const clean = Number(Boolean(input.clean ?? true));
+  const validateCertificate = Number(Boolean(input.validateCertificate ?? true));
+  const encryption = Number(Boolean(input.encryption ?? false));
   const name = input.name?.trim() || `${input.host}:${input.port}`;
   if (existing) {
     db.prepare(
       `UPDATE broker_profiles
-       SET name = ?, host = ?, port = ?, protocol = ?, username = ?, password = ?, clientId = ?, clean = ?, keepAlive = ?, reconnectPeriod = ?, caCert = ?, clientCert = ?, clientKey = ?, updatedAt = ?
+       SET name = ?, host = ?, port = ?, protocol = ?, validateCertificate = ?, encryption = ?, username = ?, password = ?, clientId = ?, clean = ?, keepAlive = ?, reconnectPeriod = ?, caCert = ?, clientCert = ?, clientKey = ?, updatedAt = ?
        WHERE id = ?`,
     ).run(
       name,
       input.host,
       input.port,
       input.protocol ?? "mqtt",
+      validateCertificate,
+      encryption,
       input.username ?? null,
       input.password ?? null,
       input.clientId ?? `mqtt-postwoman-${id.slice(0, 8)}`,
@@ -342,14 +357,16 @@ export function upsertBrokerProfile(
   } else {
     db.prepare(
       `INSERT INTO broker_profiles
-       (id, name, host, port, protocol, username, password, clientId, clean, keepAlive, reconnectPeriod, caCert, clientCert, clientKey, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, host, port, protocol, validateCertificate, encryption, username, password, clientId, clean, keepAlive, reconnectPeriod, caCert, clientCert, clientKey, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       name,
       input.host,
       input.port,
       input.protocol ?? "mqtt",
+      validateCertificate,
+      encryption,
       input.username ?? null,
       input.password ?? null,
       input.clientId ?? `mqtt-postwoman-${id.slice(0, 8)}`,
