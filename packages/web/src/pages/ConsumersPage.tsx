@@ -143,11 +143,11 @@ export function ConsumersPage(): ReactNode {
                   >
                     <strong>{item.topic}</strong>
                     <div className="button-row">
-                      <button onClick={() => subscribeSavedTopic(item)}>
+                      <button className="flex-1" onClick={() => subscribeSavedTopic(item)}>
                         Subscribe
                       </button>
                       <button
-                        className="danger"
+                        className="danger flex-1"
                         onClick={() =>
                           askDeleteConfirmation(
                             "Delete saved topic",

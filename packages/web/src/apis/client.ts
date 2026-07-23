@@ -203,7 +203,13 @@ export const apiClient = {
     remove: (id: string) => request<void>(`/helpers/${id}`, { method: "DELETE" }),
   },
   batchPublish: (payload: Record<string, unknown>) =>
-    request("/publish/batch", { method: "POST", body: JSON.stringify(payload) }),
+    request<{
+      count: number;
+      results: Array<{
+        ok: boolean;
+        log: MessageLogRow;
+      }>;
+    }>("/publish/batch", { method: "POST", body: JSON.stringify(payload) }),
   resolveTemplate: (payload: Record<string, unknown>) =>
     request<{ text: string; json: unknown; value: unknown }>("/templates/resolve", {
       method: "POST",

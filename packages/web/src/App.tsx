@@ -1087,7 +1087,7 @@ export default function App() {
       toast.error("Connect to a broker before publishing.");
       return;
     }
-    await client.batchPublish({
+    const result = await client.batchPublish({
       requestId: draft.id,
       brokerProfileId: activeConnectionId,
       topic: draft.topic,
@@ -1098,6 +1098,22 @@ export default function App() {
       retain: draft.retain,
       variables: {},
     });
+    const publishedLogs = result.results
+      .filter((item) => item.ok && item.log)
+      .map((item) => item.log);
+    if (publishedLogs.length) {
+      setHistoryLogs((current) => mergeLogs(current, publishedLogs));
+      setBootstrap((current) =>
+        current
+          ? { ...current, logs: mergeLogs(current.logs, publishedLogs) }
+          : current,
+      );
+    }
+    const fetchedLogs = await client.logs.list();
+    setHistoryLogs((current) => mergeLogs(current, fetchedLogs));
+    setBootstrap((current) =>
+      current ? { ...current, logs: mergeLogs(current.logs, fetchedLogs) } : current,
+    );
   };
 
   const clearHistory = async () => {
@@ -1906,11 +1922,11 @@ export default function App() {
                           >
                             <strong>{item.topic}</strong>
                             <div className="button-row">
-                              <button onClick={() => subscribeSavedTopic(item)}>
+                              <button className="flex-1" onClick={() => subscribeSavedTopic(item)}>
                                 Subscribe
                               </button>
                               <button
-                                className="danger"
+                                className="danger flex-1"
                                 onClick={() =>
                                   askDeleteConfirmation(
                                     "Delete saved topic",
