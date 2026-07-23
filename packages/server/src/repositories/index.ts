@@ -31,6 +31,43 @@ export class AppRepositories {
   async deleteCollection(id: string) { await this.collections().delete(id); }
   async reorderCollections(ids: string[]) { return this.source.transaction(async (manager) => { const repo = new AppRepositories(manager); const current = await repo.listCollections(); if (ids.length !== current.length || ids.some((id) => !current.some((item) => item.id === id))) throw new Error("Collection order does not match the workspace."); for (const [index, id] of ids.entries()) await repo.collections().update(id, { sortOrder: index, updatedAt: nowIso() }); return repo.listCollections(); }); }
   async duplicateCollection(id: string) { return this.source.transaction(async (manager) => { const repo = new AppRepositories(manager); const source = await repo.getCollection(id); if (!source) return undefined; const duplicate = await repo.saveCollection({ name: `${source.name} Copy`, description: source.description, variableCollectionId: source.variableCollectionId, sortOrder: source.sortOrder + 1 }); const requests = await repo.listRequests(id); for (const request of requests) await repo.saveRequest({ collectionId: duplicate.id, name: request.name, topic: request.topic, payloadTemplate: request.payloadTemplate, qos: request.qos, retain: request.retain, brokerProfileId: request.brokerProfileId, sortOrder: request.sortOrder }); return { collection: duplicate, requests: await repo.listRequests(duplicate.id) }; }); }
+  async importCollection(input: { name: string; description?: string | null | undefined; variableCollection?: { name: string; variables: Array<{ name: string; value: string }> } | undefined; requests: Array<{ name: string; topic: string; payloadTemplate: string; qos: number; retain: boolean }> }) {
+    return this.source.transaction(async (manager) => {
+      const repo = new AppRepositories(manager);
+      let variableCollectionId: string | null = null;
+      if (input.variableCollection) {
+        const variableCollectionName = input.variableCollection.name.trim();
+        const existingVariableCollection = await repo.variableCollections().createQueryBuilder("item").where("lower(item.name) = lower(:name)", { name: variableCollectionName }).getOne();
+        const variableCollection = existingVariableCollection ?? await repo.saveVariableCollection({ name: variableCollectionName });
+        variableCollectionId = variableCollection.id;
+        for (const [index, variable] of input.variableCollection.variables.entries()) {
+          const existingVariable = await repo.variables().createQueryBuilder("item").where("item.variableCollectionId = :collectionId", { collectionId: variableCollection.id }).andWhere("lower(item.name) = lower(:name)", { name: variable.name }).getOne();
+          if (!existingVariable) await repo.saveVariable({ variableCollectionId: variableCollection.id, name: variable.name, value: variable.value, sortOrder: index });
+        }
+      }
+      const baseName = input.name.trim();
+      let name = baseName;
+      let suffix = 0;
+      while (await repo.collections().createQueryBuilder("item").where("lower(item.name) = lower(:name)", { name }).getOne()) {
+        suffix += 1;
+        name = suffix === 1 ? `${baseName} (Imported)` : `${baseName} (${suffix})`;
+      }
+      const collection = await repo.saveCollection({ name, description: input.description ?? null, variableCollectionId });
+      for (const [index, request] of input.requests.entries()) {
+        await repo.saveRequest({
+          collectionId: collection.id,
+          name: request.name,
+          topic: request.topic,
+          payloadTemplate: request.payloadTemplate,
+          qos: request.qos,
+          retain: request.retain,
+          brokerProfileId: null,
+          sortOrder: index,
+        });
+      }
+      return { collection, requests: await repo.listRequests(collection.id) };
+    });
+  }
 
   async listRequests(collectionId?: string) { const options: FindManyOptions<RequestRow> = { order: { sortOrder: "ASC", createdAt: "DESC" } }; if (collectionId) options.where = { collectionId }; return this.requests().find(options); }
   async getRequest(id: string) { return this.requests().findOneBy({ id }); }

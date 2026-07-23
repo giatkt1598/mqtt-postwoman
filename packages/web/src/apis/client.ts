@@ -98,6 +98,30 @@ export const apiClient = {
         `/collections/${id}/duplicate`,
         { method: "POST" },
       ),
+    export: async (id: string) => {
+      const response = await fetch(`${API_BASE_URL}/api/collections/${id}/export`);
+      if (!response.ok) throw new Error(response.statusText || "Unable to export collection");
+      return response.blob();
+    },
+    import: async (file: File, name: string, description: string) => {
+      const response = await fetch(`${API_BASE_URL}/api/collections/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/zip",
+          "X-Collection-Name": name,
+          "X-Collection-Description": description,
+        },
+        body: file,
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: response.statusText }));
+        const message = typeof error.message === "string" && error.message.trim()
+          ? error.message
+          : response.statusText || "Unable to import collection";
+        throw new Error(message);
+      }
+      return (await response.json()) as { collection: CollectionRow; requests: RequestRow[] };
+    },
     reorder: (collectionIds: string[]) =>
       request<CollectionRow[]>("/collections/order", {
         method: "PUT",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { strFromU8, unzipSync } from "fflate";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import { apiClient as client, createRealtimeSocket } from "./apis";
@@ -46,7 +47,7 @@ import {
 } from "./contexts";
 
 type RightTab = "history" | "functions";
-type CollectionModal = "create" | "edit" | null;
+type CollectionModal = "create" | "edit" | "import" | null;
 type PayloadFormat = "raw" | "xml" | "json";
 type InactiveConsumerTopic = {
   key: string;
@@ -92,6 +93,9 @@ export default function App() {
     },
   );
   const [collectionModal, setCollectionModal] = useState<CollectionModal>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPending, setImportPending] = useState(false);
+  const [importError, setImportError] = useState("");
   const [collectionMenuId, setCollectionMenuId] = useState<string | null>(null);
   const [requestMenuId, setRequestMenuId] = useState<string | null>(null);
   const [popoverPosition, setPopoverPosition] = useState<{
@@ -552,6 +556,87 @@ export default function App() {
     await refresh();
     setSelectedCollectionId(saved.id);
     setCollectionModal(null);
+  };
+
+  const openImportCollection = () => {
+    setImportFile(null);
+    setImportError("");
+    setCollectionDraft({ id: "", name: "", description: "" });
+    setCollectionModal("import");
+  };
+
+  const closeCollectionModal = () => {
+    if (importPending) return;
+    setCollectionModal(null);
+    setImportFile(null);
+    setImportError("");
+  };
+
+  const readImportFile = async (file: File) => {
+    setImportFile(file);
+    setImportError("");
+    const fallbackName = file.name.replace(/\.zip$/i, "").trim() || "Imported collection";
+    setCollectionDraft({ id: "", name: fallbackName, description: "" });
+    try {
+      const files = unzipSync(new Uint8Array(await file.arrayBuffer()));
+      const manifest = files["collection.json"];
+      if (!manifest) return;
+      const value: unknown = JSON.parse(strFromU8(manifest));
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+      const record = value as Record<string, unknown>;
+      setCollectionDraft({
+        id: "",
+        name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : fallbackName,
+        description: typeof record.description === "string" ? record.description : "",
+      });
+    } catch {
+      setImportError("Unable to read ZIP metadata. The server will validate the selected file.");
+    }
+  };
+
+  const importCollection = async () => {
+    if (!importFile || !collectionDraft.name.trim()) return;
+    setImportPending(true);
+    setImportError("");
+    try {
+      const result = await client.collections.import(
+        importFile,
+        collectionDraft.name.trim(),
+        collectionDraft.description,
+      );
+      await refresh();
+      setSelectedCollectionId(result.collection.id);
+      setSelectedRequestId("");
+      setExpandedCollectionIds((current) => {
+        const next = current.includes(result.collection.id)
+          ? current
+          : [...current, result.collection.id];
+        localStorage.setItem("mqtt-postwoman.expandedCollections", JSON.stringify(next));
+        return next;
+      });
+      setCollectionModal(null);
+      setImportFile(null);
+      toast.success(`Imported collection "${result.collection.name}".`);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Unable to import collection");
+    } finally {
+      setImportPending(false);
+    }
+  };
+
+  const exportCollection = async (collection: CollectionRow) => {
+    try {
+      const blob = await client.collections.export(collection.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${collection.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-") || "collection"}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+      closeActionPopover();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to export collection");
+    }
   };
 
   const deleteCollection = async (collection?: CollectionRow) => {
@@ -1440,6 +1525,7 @@ export default function App() {
     dragOverRequestId,
     dragOverCollectionId,
     onCreateCollection: openCreateCollection,
+    onImportCollection: openImportCollection,
     onSelectCollection: selectCollection,
     onSelectRequest: selectRequest,
     onToggleCollection: toggleCollection,
@@ -1964,6 +2050,9 @@ export default function App() {
                 style={popoverPosition}
                 onMouseDown={(event) => event.stopPropagation()}
               >
+                <button onClick={() => void exportCollection(collection)}>
+                  Export
+                </button>
                 <button onClick={() => sortCollectionRequests(collection)}>
                   Sort
                 </button>
@@ -2031,7 +2120,7 @@ export default function App() {
         <div
           className="modal-backdrop"
           role="presentation"
-          onMouseDown={() => setCollectionModal(null)}
+          onMouseDown={closeCollectionModal}
         >
           <div
             className="modal-card"
@@ -2045,16 +2134,20 @@ export default function App() {
                 <div id="collection-modal-title" className="card-title">
                   {collectionModal === "create"
                     ? "New collection"
-                    : "Edit collection"}
+                    : collectionModal === "import"
+                      ? "Import collection"
+                      : "Edit collection"}
                 </div>
                 <div className="card-sub">
-                  Organize requests into a reusable MQTT collection.
+                  {collectionModal === "import"
+                    ? "Import a collection and its MQTT requests from a ZIP file."
+                    : "Organize requests into a reusable MQTT collection."}
                 </div>
               </div>
               <button
                 className="icon-button"
                 aria-label="Close"
-                onClick={() => setCollectionModal(null)}
+                onClick={closeCollectionModal}
               >
                 ×
               </button>
@@ -2085,16 +2178,39 @@ export default function App() {
                 }
               />
             </label>
+            {collectionModal === "import" && (
+              <>
+                <label>
+                  ZIP file
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void readImportFile(file);
+                    }}
+                  />
+                </label>
+                {importError && <div className="form-error">{importError}</div>}
+              </>
+            )}
             <div className="button-row modal-actions">
-              <button onClick={() => setCollectionModal(null)}>Cancel</button>
+              <button onClick={closeCollectionModal} disabled={importPending}>Cancel</button>
               <button
                 className="primary"
-                onClick={saveCollection}
-                disabled={!collectionDraft.name.trim()}
+                onClick={collectionModal === "import" ? () => void importCollection() : () => void saveCollection()}
+                disabled={
+                  !collectionDraft.name.trim() ||
+                  (collectionModal === "import" && (!importFile || importPending))
+                }
               >
-                {collectionModal === "create"
-                  ? "Create collection"
-                  : "Save changes"}
+                {importPending
+                  ? "Importing..."
+                  : collectionModal === "create"
+                    ? "Create collection"
+                    : collectionModal === "import"
+                      ? "Import"
+                      : "Save changes"}
               </button>
             </div>
           </div>

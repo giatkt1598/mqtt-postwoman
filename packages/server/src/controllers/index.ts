@@ -1,5 +1,6 @@
 import { AppServices, CollectionInput, RequestInput, VariableCollectionInput, VariableInput, PublishInput, BatchPublishInput, BrokerInput } from "../services/app-services";
 import { RuntimeService } from "../runtime";
+import { CollectionTransferService } from "../services/collection-transfer";
 
 export class CollectionController {
   constructor(private readonly service: AppServices) {}
@@ -8,6 +9,13 @@ export class CollectionController {
   remove = (id: string) => this.service.collections.delete(id);
   reorder = (ids: string[]) => this.service.collections.reorder(ids);
   duplicate = (id: string) => this.service.collections.duplicate(id);
+}
+
+export class CollectionTransferController {
+  constructor(private readonly service: CollectionTransferService) {}
+  static safeFileName(value: string) { return CollectionTransferService.safeFileName(value); }
+  export = (id: string) => this.service.exportCollection(id);
+  import = (buffer: Buffer, name?: string, description?: string | null) => this.service.importCollection(buffer, name, description);
 }
 
 export class RequestController {
@@ -72,8 +80,10 @@ export class LogController {
 }
 
 export function createControllers(service: AppServices, runtime: RuntimeService) {
+  const transfer = new CollectionTransferService(service.repositories);
   return {
     collections: new CollectionController(service),
+    collectionTransfer: new CollectionTransferController(transfer),
     requests: new RequestController(service),
     variables: new VariableController(service),
     publish: new PublishController(service),

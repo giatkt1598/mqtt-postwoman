@@ -1,9 +1,5 @@
 import { DragEvent } from "react";
-import {
-  CollectionRow,
-  DraftRequest,
-  RequestRow,
-} from "../models";
+import { CollectionRow, DraftRequest, RequestRow } from "../models";
 import { isRequestModified } from "../utilities";
 import { useWorkspaceContext } from "../contexts";
 
@@ -20,6 +16,7 @@ export interface CollectionSidebarProps {
   dragOverRequestId: string | null;
   dragOverCollectionId: string | null;
   onCreateCollection: () => void;
+  onImportCollection: () => void;
   onSelectCollection: (collection: CollectionRow) => void;
   onSelectRequest: (request: RequestRow) => void;
   onToggleCollection: (collectionId: string) => void;
@@ -58,6 +55,7 @@ export function CollectionSidebar() {
     dragOverRequestId,
     dragOverCollectionId,
     onCreateCollection,
+    onImportCollection,
     onSelectCollection,
     onSelectRequest,
     onToggleCollection,
@@ -86,6 +84,15 @@ export function CollectionSidebar() {
       <div className="sidebar-panel">
         <div className="panel-header">
           <span>Collections</span>
+          <span className="flex-1" />
+          <button
+            className="icon-button"
+            aria-label="Import collection"
+            title="Import collection"
+            onClick={onImportCollection}
+          >
+            ⇧
+          </button>
           <button
             className="icon-button"
             aria-label="Create collection"
@@ -110,12 +117,18 @@ export function CollectionSidebar() {
                     event.dataTransfer.dropEffect = "move";
                     onCollectionDragOver(collection.id);
                   }}
-                  onDrop={(event) => onDropRequestOnCollection(collection.id, event)}
+                  onDrop={(event) =>
+                    onDropRequestOnCollection(collection.id, event)
+                  }
                 >
                   <button
                     className="collection-toggle"
-                    aria-label={isExpanded ? "Collapse collection" : "Expand collection"}
-                    title={isExpanded ? "Collapse collection" : "Expand collection"}
+                    aria-label={
+                      isExpanded ? "Collapse collection" : "Expand collection"
+                    }
+                    title={
+                      isExpanded ? "Collapse collection" : "Expand collection"
+                    }
                     onClick={() => onToggleCollection(collection.id)}
                   >
                     {isExpanded ? "⌄" : "›"}
@@ -162,7 +175,10 @@ export function CollectionSidebar() {
                       aria-label="More collection actions"
                       title="More collection actions"
                       onClick={(event) =>
-                        onCollectionMenuToggle(collection.id, event.currentTarget)
+                        onCollectionMenuToggle(
+                          collection.id,
+                          event.currentTarget,
+                        )
                       }
                     >
                       ⋯
@@ -181,7 +197,10 @@ export function CollectionSidebar() {
                           draggable
                           onDragStart={(event) => {
                             event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", request.id);
+                            event.dataTransfer.setData(
+                              "text/plain",
+                              request.id,
+                            );
                             onRequestDragStart(request.id);
                           }}
                           onDragOver={(event) => {
@@ -189,15 +208,26 @@ export function CollectionSidebar() {
                             event.dataTransfer.dropEffect = "move";
                             onRequestDragOver(request.id);
                           }}
-                          onDrop={(event) => onDropRequest(collection.id, request.id, event)}
+                          onDrop={(event) =>
+                            onDropRequest(collection.id, request.id, event)
+                          }
                           onDragEnd={onRequestDragEnd}
                           onClick={() => onSelectRequest(request)}
                         >
                           <span className="request-method">MQTT</span>
-                          {isRequestModified(request, requestDrafts[request.id]) && (
-                            <span className="request-modified-dot" aria-label="Modified" title="Modified" />
+                          {isRequestModified(
+                            request,
+                            requestDrafts[request.id],
+                          ) && (
+                            <span
+                              className="request-modified-dot"
+                              aria-label="Modified"
+                              title="Modified"
+                            />
                           )}
-                          <span className="request-tree-name">{request.name}</span>
+                          <span className="request-tree-name">
+                            {request.name}
+                          </span>
                         </button>
                         <button
                           className="icon-button request-more-button"
@@ -205,7 +235,10 @@ export function CollectionSidebar() {
                           title="More request actions"
                           onClick={(event) => {
                             event.stopPropagation();
-                            onRequestMenuToggle(request.id, event.currentTarget);
+                            onRequestMenuToggle(
+                              request.id,
+                              event.currentTarget,
+                            );
                           }}
                         >
                           ⋯
@@ -213,7 +246,9 @@ export function CollectionSidebar() {
                       </div>
                     ))}
                     {collectionRequests.length === 0 && (
-                      <small className="request-tree-empty">No requests yet</small>
+                      <small className="request-tree-empty">
+                        No requests yet
+                      </small>
                     )}
                   </div>
                 )}

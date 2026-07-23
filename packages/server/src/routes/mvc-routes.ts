@@ -1,11 +1,11 @@
-import { Request as ExpressRequest, Response, Router } from "express";
+import express, { Request as ExpressRequest, Response, Router } from "express";
 import { DataSource } from "typeorm";
 import { z } from "zod";
 import { asyncHandler } from "../middleware/async-handler";
 import { AppRepositories } from "../repositories";
 import { RuntimeService } from "../runtime";
 import { AppServices, schemas } from "../services/app-services";
-import { createControllers } from "../controllers";
+import { CollectionTransferController, createControllers } from "../controllers";
 import { listBuiltinFunctions } from "../template/functions";
 import { nowIso } from "../utils";
 
@@ -28,6 +28,18 @@ export function buildMvcRouter(dataSource: DataSource, runtime: RuntimeService) 
   router.get("/bootstrap", route(async (_req: Request, res: Response) => res.json(await repositories.bootstrap())));
 
   router.get("/collections", route(async (_req: Request, res: Response) => res.json(await controllers.collections.list())));
+  router.get("/collections/:id/export", route(async (req: Request, res: Response) => {
+    const result = await controllers.collectionTransfer.export(req.params.id);
+    res.type("application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${CollectionTransferController.safeFileName(result.collection.name)}.zip"`);
+    res.send(result.buffer);
+  }));
+  router.post("/collections/import", express.raw({ type: "application/zip", limit: "10mb" }), route(async (req: Request, res: Response) => {
+    if (!Buffer.isBuffer(req.body)) throw new Error("A ZIP file is required.");
+    const name = typeof req.headers["x-collection-name"] === "string" ? req.headers["x-collection-name"] : undefined;
+    const description = typeof req.headers["x-collection-description"] === "string" ? req.headers["x-collection-description"] : undefined;
+    res.status(201).json(await controllers.collectionTransfer.import(req.body, name, description));
+  }));
   router.post("/collections", route(async (req: Request, res: Response) => res.status(201).json(await controllers.collections.save(schemas.collection.parse(req.body)))));
   router.put("/collections/order", route(async (req: Request, res: Response) => { const input = orderSchema.parse(req.body); if (!input.collectionIds) throw new Error("Collection order is required."); return res.json(await controllers.collections.reorder(input.collectionIds)); }));
   router.put("/collections/:id", route(async (req: Request, res: Response) => res.json(await controllers.collections.save(schemas.collection.parse({ ...req.body, id: req.params.id })) )));
