@@ -303,16 +303,6 @@ export function ConnectionsPage(): ReactNode {
                   }
                 />
               </label>
-              <label className="inline mb-3">
-                <input
-                  type="checkbox"
-                  checked={brokerDraft.clean}
-                  onChange={(event) =>
-                    setBrokerDraft({ ...brokerDraft, clean: event.target.checked })
-                  }
-                />
-                Clean session
-              </label>
               <label>
                 Reconnect period
                 <input
@@ -325,6 +315,16 @@ export function ConnectionsPage(): ReactNode {
                     })
                   }
                 />
+              </label>
+              <label className="inline mb-3">
+                <input
+                  type="checkbox"
+                  checked={brokerDraft.clean}
+                  onChange={(event) =>
+                    setBrokerDraft({ ...brokerDraft, clean: event.target.checked })
+                  }
+                />
+                Clean session
               </label>
             </div>
             <div className="connection-form-actions">

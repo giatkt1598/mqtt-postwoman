@@ -784,10 +784,6 @@ h1 {
   padding: 1rem;
 }
 
-.full-width-page .connections-form {
-  max-width: none;
-}
-
 .connections-form {
   max-width: 720px;
 }
@@ -817,15 +813,21 @@ h1 {
 }
 
 .connection-advanced-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
-  flex-wrap: wrap;
   gap: 1rem;
   margin-top: 1rem;
 }
 
 .connection-advanced-row > label:not(.inline) {
-  min-width: 150px;
+  min-width: 0;
+}
+
+.connection-advanced-row > label.inline {
+  align-self: end;
+  min-height: 2.4rem;
+  margin-bottom: 0;
 }
 
 .password-field {
@@ -840,7 +842,7 @@ h1 {
 .password-toggle {
   position: absolute;
   right: 0.35rem;
-  bottom: 0.28rem;
+  bottom: 0.5rem;
   display: grid;
   place-items: center;
   width: 2rem;
@@ -1589,7 +1591,8 @@ pre {
 
   .connection-primary-row,
   .connection-endpoint-row,
-  .connection-credentials-row {
+  .connection-credentials-row,
+  .connection-advanced-row {
     grid-template-columns: 1fr;
   }
 }
