@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveTemplatePayload } from "../src/template";
 import { AppDatabase } from "../src/db";
+import { listBuiltinFunctions } from "../src/template/functions";
 
 const fakeDb = {
   raw: {
@@ -46,4 +47,23 @@ test("resolves padded sequence token with batch offset", () => {
   const result = resolveTemplatePayload(fakeDb, '{"sequence":"{{sequence:1:6}}"}', undefined, {}, 1);
   const payload = result.value as Record<string, unknown>;
   assert.equal(payload.sequence, "000002");
+});
+
+test("resolves timestamp and randomInt built-ins", () => {
+  const result = resolveTemplatePayload(
+    fakeDb,
+    '{"timestamp":"{{timestamp}}","value":"{{randomInt:10:10}}"}',
+  );
+  const payload = result.value as Record<string, unknown>;
+  assert.match(String(payload.timestamp), /^\d+$/);
+  assert.equal(payload.value, "10");
+});
+
+test("exposes built-ins from the function registry", () => {
+  const functions = listBuiltinFunctions();
+  assert.deepEqual(
+    functions.map((item) => item.name),
+    ["now", "uuid", "timestamp", "sequence", "randomInt"],
+  );
+  assert.ok(functions.every((item) => item.description.length > 0));
 });

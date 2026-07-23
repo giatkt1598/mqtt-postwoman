@@ -1,85 +1,20 @@
-import { randomUUID } from "crypto";
-import dayjs from "dayjs";
-import { AppDatabase, listHelpers, getEnvironment } from "./db";
-import { HelperKind, TemplateHelperRow } from "./types";
-import { parseObjectLike, safeJsonParse } from "./utils";
+import { getEnvironment, AppDatabase } from "./db";
+import { createTemplateHelperMap, resolveCustomHelper } from "./template/custom-helpers";
+import { resolveBuiltinFunction } from "./template/functions";
+import { ResolvedTemplate, TemplateContext } from "./template/types";
+import { safeJsonParse } from "./utils";
 
-export interface TemplateContext {
-  environment?: Record<string, unknown>;
-  variables?: Record<string, unknown>;
-  helpers?: Record<string, TemplateHelperRow>;
-  sequenceOffset?: number;
-}
-
-export interface ResolvedTemplate {
-  text: string;
-  json: unknown | null;
-}
-
-type HelperResolver = (config: Record<string, unknown>, context: TemplateContext) => unknown;
-
-function formatDate(date: Date, format?: unknown) {
-  const current = dayjs(date);
-  if (typeof format !== "string" || !format) return current.toISOString();
-  if (format === "iso") return current.toISOString();
-  if (format === "date") return current.format("YYYY-MM-DD");
-  if (format === "time") return current.format("HH:mm:ss");
-  // Accept the common lowercase year/day spelling while keeping Day.js tokens.
-  const dayjsFormat = format.replace(/yyyy/g, "YYYY").replace(/yy/g, "YY").replace(/dd/g, "DD");
-  return current.format(dayjsFormat);
-}
-
-const builtinHelpers: Record<string, HelperResolver> = {
-  now: (config) => formatDate(new Date(), config.format),
-  uuid: () => randomUUID(),
-  timestamp: () => Date.now(),
-};
-
-const helperKindResolvers: Record<HelperKind, HelperResolver> = {
-  literal: (config) => config.value ?? "",
-  now: (config) => formatDate(new Date(), config.format),
-  uuid: () => randomUUID(),
-  randomInt: (config) => {
-    const min = Number(config.min ?? 0);
-    const max = Number(config.max ?? 999999);
-    return Math.floor(min + Math.random() * (max - min + 1));
-  },
-  env: (config, context) => {
-    const key = String(config.key ?? "");
-    return context.environment?.[key] ?? context.variables?.[key] ?? "";
-  },
-};
-
-function loadCustomHelpers(db: AppDatabase) {
-  const rows = listHelpers(db.raw);
-  return rows.reduce<Record<string, TemplateHelperRow>>((acc, row) => {
-    acc[row.name] = row;
-    return acc;
-  }, {});
-}
+export type { ResolvedTemplate, TemplateContext } from "./template/types";
 
 function resolveHelper(name: string, context: TemplateContext) {
-  if (name.startsWith("now:")) {
-    return builtinHelpers.now?.({ format: name.slice("now:".length) }, context);
-  }
-  if (name.startsWith("sequence:")) {
-    const [startText, digitsText] = name.slice("sequence:".length).split(":");
-    const start = Number(startText);
-    const value = (Number.isFinite(start) ? start : 0) + (context.sequenceOffset ?? 0);
-    const digits = Number(digitsText);
-    return Number.isInteger(digits) && digits > 0 ? String(value).padStart(digits, "0") : value;
-  }
   if (name.startsWith("env.")) {
     const key = name.slice(4);
     return context.environment?.[key] ?? context.variables?.[key] ?? "";
   }
-  if (Object.prototype.hasOwnProperty.call(builtinHelpers, name)) {
-    return builtinHelpers[name]?.({}, context);
-  }
-  const helper = context.helpers?.[name];
-  if (!helper) return `{{${name}}}`;
-  const config = parseObjectLike(safeJsonParse(helper.configJson));
-  return helperKindResolvers[helper.kind](config, context);
+  const builtin = resolveBuiltinFunction(name, context);
+  if (builtin.matched) return builtin.value;
+  const custom = resolveCustomHelper(name, context);
+  return custom.matched ? custom.value : `{{${name}}}`;
 }
 
 function replaceInString(value: string, context: TemplateContext) {
@@ -124,7 +59,7 @@ export function resolveTemplatePayload(
 ) {
   const environmentRow = environmentId ? getEnvironment(db.raw, environmentId) : undefined;
   const environment = environmentRow ? (safeJsonParse(environmentRow.variablesJson) as Record<string, unknown> | null) ?? {} : {};
-  const helpers = loadCustomHelpers(db);
+  const helpers = createTemplateHelperMap(db);
   const context: TemplateContext = {
     environment,
     variables,

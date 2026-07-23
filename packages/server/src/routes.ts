@@ -36,6 +36,7 @@ import {
 } from "./db";
 import { RuntimeManager } from "./runtime";
 import { resolveTemplatePayload } from "./template";
+import { listBuiltinFunctions } from "./template/functions";
 import { createId, nowIso, parseObjectLike, safeJsonParse } from "./utils";
 
 export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
@@ -461,6 +462,10 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     const input = schema.parse(req.body);
     const resolved = resolveTemplatePayload(db, input.template, input.environmentId ?? null, parseObjectLike(input.variables));
     res.json(resolved);
+  });
+
+  router.get("/templates/functions", (_req, res) => {
+    res.json(listBuiltinFunctions());
   });
 
   router.get("/catalog", (_req, res) => {
