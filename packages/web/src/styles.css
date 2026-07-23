@@ -289,6 +289,11 @@ label {
   background: transparent;
   text-align: left;
   font-size: 0.8rem;
+  cursor: grab;
+}
+
+.collection-main:active {
+  cursor: grabbing;
 }
 
 .collection-main:hover {
@@ -359,10 +364,8 @@ label {
 }
 
 .collection-menu {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 0.35rem);
-  right: 0;
+  position: fixed;
+  z-index: 1001;
   min-width: 120px;
   padding: 0.3rem;
   border: 1px solid var(--border);
@@ -397,17 +400,80 @@ label {
   border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.request-tree-row {
+  position: relative;
+  min-width: 0;
+  border-radius: 8px;
+}
+
+.request-tree-row:hover,
+.request-tree-row.active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .request-tree-item {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  width: 100%;
   min-width: 0;
-  padding: 0.48rem 0.55rem;
+  padding: 0.48rem 2.35rem 0.48rem 0.55rem;
   border: 0;
   border-radius: 8px;
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.request-actions {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.request-more-button {
+  opacity: 0;
+  background: transparent;
+}
+
+.request-tree-row:hover .request-more-button,
+.request-more-button:focus-visible {
+  opacity: 1;
+}
+
+.request-menu {
+  position: fixed;
+  z-index: 1001;
+  min-width: 120px;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #151d35;
+  box-shadow: var(--shadow);
+}
+
+.request-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+}
+
+.request-menu button:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.popover-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  background: transparent;
 }
 
 .request-tree-item:active {
@@ -424,7 +490,7 @@ label {
 
 .request-tree-item:hover,
 .request-tree-item.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: transparent;
   border-color: transparent;
 }
 

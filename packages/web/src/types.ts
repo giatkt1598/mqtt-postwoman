@@ -2,6 +2,7 @@ export interface CollectionRow {
   id: string;
   name: string;
   description: string | null;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -32,6 +32,7 @@ import {
   upsertHelper,
   upsertRequest,
   reorderRequests,
+  reorderCollections,
 } from "./db";
 import { RuntimeManager } from "./runtime";
 import { resolveTemplatePayload } from "./template";
@@ -104,6 +105,16 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     const saved = upsertCollection(db.raw, input);
     res.status(201).json(saved);
   });
+  router.put("/collections/order", (req, res) => {
+    const schema = z.object({ collectionIds: z.array(z.string()) });
+    try {
+      const input = schema.parse(req.body);
+      res.json(reorderCollections(db.raw, input.collectionIds));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to reorder collections";
+      res.status(400).json({ message });
+    }
+  });
   router.put("/collections/:id", (req, res) => {
     const input = collectionSchema.parse({ ...req.body, id: req.params.id });
     const saved = upsertCollection(db.raw, input);
@@ -121,7 +132,6 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     }
     res.status(201).json(duplicated);
   });
-
   router.get("/requests", (req, res) => {
     const collectionId = typeof req.query.collectionId === "string" ? req.query.collectionId : undefined;
     res.json(listRequests(db.raw, collectionId));

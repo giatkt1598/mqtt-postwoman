@@ -271,6 +271,11 @@ export default function App() {
   );
   const [collectionModal, setCollectionModal] = useState<CollectionModal>(null);
   const [collectionMenuId, setCollectionMenuId] = useState<string | null>(null);
+  const [requestMenuId, setRequestMenuId] = useState<string | null>(null);
+  const [popoverPosition, setPopoverPosition] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const [favoriteCollectionIds, setFavoriteCollectionIds] = useState<string[]>(
     () => {
       try {
@@ -327,6 +332,7 @@ export default function App() {
     description: "",
   });
   const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
+  const [draggedCollectionId, setDraggedCollectionId] = useState<string | null>(null);
   const [dragOverRequestId, setDragOverRequestId] = useState<string | null>(null);
   const [dragOverCollectionId, setDragOverCollectionId] = useState<string | null>(null);
   const [envDraft, setEnvDraft] = useState({
@@ -354,6 +360,21 @@ export default function App() {
   const [deleteConfirmation, setDeleteConfirmation] =
     useState<DeleteConfirmation | null>(null);
   const [topicValidationError, setTopicValidationError] = useState(false);
+
+  const closeActionPopover = () => {
+    setCollectionMenuId(null);
+    setRequestMenuId(null);
+    setPopoverPosition(null);
+  };
+
+  const getPopoverPosition = (element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const width = 150;
+    return {
+      top: rect.bottom + 6,
+      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+    };
+  };
 
   const refresh = async () => {
     const [data, statuses, fetchedLogs] = await Promise.all([
@@ -856,6 +877,22 @@ export default function App() {
       });
       await client.requests.reorder(targetCollectionId, targetRequestIds);
       await refresh();
+      setRequestDrafts((current) => {
+        const movedDraft = current[requestId];
+        if (!movedDraft) return current;
+        return {
+          ...current,
+          [requestId]: {
+            ...movedDraft,
+            collectionId: targetCollectionId,
+          },
+        };
+      });
+      setDraft((current) =>
+        current.id === requestId
+          ? { ...current, collectionId: targetCollectionId }
+          : current,
+      );
       setSelectedCollectionId(targetCollectionId);
       setSelectedRequestId(requestId);
       setExpandedCollectionIds((current) => {
@@ -882,10 +919,49 @@ export default function App() {
   ) => {
     event.preventDefault();
     event.stopPropagation();
+    if (draggedCollectionId) {
+      void reorderCollections(draggedCollectionId, collectionId);
+      return;
+    }
     const sourceRequestId =
       draggedRequestId ?? event.dataTransfer.getData("text/plain");
     if (sourceRequestId) {
       void moveRequestToCollection(sourceRequestId, collectionId);
+    }
+  };
+
+  const reorderCollections = async (
+    sourceCollectionId: string,
+    targetCollectionId: string,
+  ) => {
+    setDragOverCollectionId(null);
+    if (sourceCollectionId === targetCollectionId) {
+      setDraggedCollectionId(null);
+      return;
+    }
+
+    const reordered = [...sortedCollections];
+    const sourceIndex = reordered.findIndex(
+      (collection) => collection.id === sourceCollectionId,
+    );
+    const targetIndex = reordered.findIndex(
+      (collection) => collection.id === targetCollectionId,
+    );
+    if (sourceIndex < 0 || targetIndex < 0) {
+      setDraggedCollectionId(null);
+      return;
+    }
+    const [moved] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+
+    try {
+      await client.collections.reorder(reordered.map((collection) => collection.id));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to reorder collections");
+    } finally {
+      setDraggedCollectionId(null);
+      setDragOverCollectionId(null);
     }
   };
 
@@ -996,6 +1072,56 @@ export default function App() {
         environments[0]?.id ?? "",
       ),
     );
+  };
+
+  const deleteRequestById = async (requestId: string) => {
+    await client.requests.remove(requestId);
+    setRequestDrafts((current) => {
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+    if (selectedRequestId === requestId) {
+      setSelectedRequestId("");
+      setDraft(
+        emptyDraft(
+          selectedCollectionId,
+          fallbackConnectionId,
+          environments[0]?.id ?? "",
+        ),
+      );
+    }
+    setRequestMenuId(null);
+    await refresh();
+  };
+
+  const duplicateRequest = async (request: RequestRow) => {
+    try {
+      const duplicated = await client.requests.create({
+        collectionId: request.collectionId,
+        name: `${request.name} Copy`,
+        topic: request.topic,
+        payloadTemplate: request.payloadTemplate,
+        qos: request.qos,
+        retain: Boolean(request.retain),
+        brokerProfileId: request.brokerProfileId,
+        environmentId: request.environmentId,
+      });
+      const collectionRequests = (bootstrap?.requests ?? []).filter(
+        (item) => item.collectionId === request.collectionId,
+      );
+      const requestIds = collectionRequests.map((item) => item.id);
+      const sourceIndex = requestIds.indexOf(request.id);
+      requestIds.splice(sourceIndex < 0 ? requestIds.length : sourceIndex + 1, 0, duplicated.id);
+      await client.requests.reorder(request.collectionId, requestIds);
+      await refresh();
+      setSelectedCollectionId(request.collectionId);
+      setSelectedRequestId(duplicated.id);
+      setDraft(requestToDraft(duplicated));
+      setRequestMenuId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to duplicate request");
+    }
   };
 
   const publishRequest = async () => {
@@ -1437,7 +1563,9 @@ export default function App() {
                     onDragOver={(event) => {
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
-                      setDragOverCollectionId(collection.id);
+                      if (draggedCollectionId !== collection.id) {
+                        setDragOverCollectionId(collection.id);
+                      }
                     }}
                     onDrop={(event) =>
                       dropRequestOnCollection(collection.id, event)
@@ -1457,6 +1585,17 @@ export default function App() {
                     </button>
                     <button
                       className="collection-main"
+                      draggable
+                      onDragStart={(event) => {
+                        event.stopPropagation();
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", collection.id);
+                        setDraggedCollectionId(collection.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedCollectionId(null);
+                        setDragOverCollectionId(null);
+                      }}
                       onClick={() => selectCollection(collection)}
                     >
                       <span className="collection-label">
@@ -1488,89 +1627,89 @@ export default function App() {
                         className="icon-button"
                         aria-label="More collection actions"
                         title="More collection actions"
-                        onClick={() =>
-                          setCollectionMenuId((current) =>
-                            current === collection.id ? null : collection.id,
-                          )
-                        }
+                        onClick={(event) => {
+                          if (collectionMenuId === collection.id) {
+                            closeActionPopover();
+                            return;
+                          }
+                          setRequestMenuId(null);
+                          setCollectionMenuId(collection.id);
+                          setPopoverPosition(
+                            getPopoverPosition(event.currentTarget),
+                          );
+                        }}
                       >
                         ⋯
                       </button>
-                      {collectionMenuId === collection.id && (
-                        <div className="collection-menu">
-                          <button
-                            onClick={() => sortCollectionRequests(collection)}
-                          >
-                            Sort
-                          </button>
-                          <button
-                            onClick={() => duplicateCollection(collection)}
-                          >
-                            Duplicate
-                          </button>
-                          <button
-                            onClick={() => openEditCollection(collection)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className="danger-text"
-                            onClick={() =>
-                              askDeleteConfirmation(
-                                "Delete collection",
-                                "Delete this collection and all of its requests?",
-                                () => deleteCollection(collection),
-                              )
-                            }
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                   {isExpanded && (
                     <div className="request-tree">
                       {collectionRequests.map((request) => (
-                        <button
+                        <div
                           key={request.id}
-                          className={`request-tree-item ${request.id === selectedRequestId ? "active" : ""} ${request.id === draggedRequestId ? "dragging" : ""} ${request.id === dragOverRequestId ? "drag-over" : ""}`}
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", request.id);
-                            setDraggedRequestId(request.id);
-                          }}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "move";
-                            setDragOverRequestId(request.id);
-                          }}
-                          onDrop={(event) =>
-                            dropRequest(collection.id, request.id, event)
-                          }
-                          onDragEnd={() => {
-                            setDraggedRequestId(null);
-                            setDragOverRequestId(null);
-                            setDragOverCollectionId(null);
-                          }}
-                          onClick={() => selectRequest(request)}
+                          className={`request-tree-row ${request.id === selectedRequestId ? "active" : ""}`}
                         >
-                          <span className="request-method">MQTT</span>
-                          {isRequestModified(
-                            request,
-                            requestDrafts[request.id],
-                          ) && (
-                            <span
-                              className="request-modified-dot"
-                              aria-label="Modified"
-                              title="Modified"
-                            />
-                          )}
-                          <span className="request-tree-name">
-                            {request.name}
-                          </span>
-                        </button>
+                          <button
+                            className={`request-tree-item ${request.id === selectedRequestId ? "active" : ""} ${request.id === draggedRequestId ? "dragging" : ""} ${request.id === dragOverRequestId ? "drag-over" : ""}`}
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", request.id);
+                              setDraggedRequestId(request.id);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                              setDragOverRequestId(request.id);
+                            }}
+                            onDrop={(event) =>
+                              dropRequest(collection.id, request.id, event)
+                            }
+                            onDragEnd={() => {
+                              setDraggedRequestId(null);
+                              setDragOverRequestId(null);
+                              setDragOverCollectionId(null);
+                            }}
+                            onClick={() => selectRequest(request)}
+                          >
+                            <span className="request-method">MQTT</span>
+                            {isRequestModified(
+                              request,
+                              requestDrafts[request.id],
+                            ) && (
+                              <span
+                                className="request-modified-dot"
+                                aria-label="Modified"
+                                title="Modified"
+                              />
+                            )}
+                            <span className="request-tree-name">
+                              {request.name}
+                            </span>
+                          </button>
+                          <div className="request-actions">
+                            <button
+                              className="icon-button request-more-button"
+                              aria-label="More request actions"
+                              title="More request actions"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (requestMenuId === request.id) {
+                                  closeActionPopover();
+                                  return;
+                                }
+                                setCollectionMenuId(null);
+                                setRequestMenuId(request.id);
+                                setPopoverPosition(
+                                  getPopoverPosition(event.currentTarget),
+                                );
+                              }}
+                            >
+                              ⋯
+                            </button>
+                          </div>
+                        </div>
                       ))}
                       {collectionRequests.length === 0 && (
                         <small className="request-tree-empty">
@@ -2924,6 +3063,86 @@ export default function App() {
 
         {error && <div className="error-banner">{error}</div>}
       </main>
+      {collectionMenuId &&
+        popoverPosition &&
+        (() => {
+          const collection = collections.find(
+            (item) => item.id === collectionMenuId,
+          );
+          if (!collection) return null;
+          return (
+            <div
+              className="popover-backdrop"
+              onMouseDown={closeActionPopover}
+            >
+              <div
+                className="collection-menu"
+                style={popoverPosition}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <button onClick={() => sortCollectionRequests(collection)}>
+                  Sort
+                </button>
+                <button onClick={() => duplicateCollection(collection)}>
+                  Duplicate
+                </button>
+                <button onClick={() => openEditCollection(collection)}>
+                  Edit
+                </button>
+                <button
+                  className="danger-text"
+                  onClick={() => {
+                    closeActionPopover();
+                    askDeleteConfirmation(
+                      "Delete collection",
+                      "Delete this collection and all of its requests?",
+                      () => deleteCollection(collection),
+                    );
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      {requestMenuId &&
+        popoverPosition &&
+        (() => {
+          const request = (bootstrap?.requests ?? []).find(
+            (item) => item.id === requestMenuId,
+          );
+          if (!request) return null;
+          return (
+            <div
+              className="popover-backdrop"
+              onMouseDown={closeActionPopover}
+            >
+              <div
+                className="request-menu"
+                style={popoverPosition}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <button onClick={() => duplicateRequest(request)}>
+                  Duplicate
+                </button>
+                <button
+                  className="danger-text"
+                  onClick={() => {
+                    closeActionPopover();
+                    askDeleteConfirmation(
+                      "Delete request",
+                      `Delete request "${request.name}"?`,
+                      () => deleteRequestById(request.id),
+                    );
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       {collectionModal && (
         <div
           className="modal-backdrop"

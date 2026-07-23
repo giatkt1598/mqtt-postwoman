@@ -43,9 +43,14 @@ export const client = {
         `/collections/${id}/duplicate`,
         { method: "POST" },
       ),
+    reorder: (collectionIds: string[]) =>
+      api<CollectionRow[]>("/collections/order", {
+        method: "PUT",
+        body: JSON.stringify({ collectionIds }),
+      }),
   },
   requests: {
-    create: (payload: Partial<RequestRow> & DraftRequest) =>
+    create: (payload: Partial<RequestRow> & Record<string, unknown>) =>
       api<RequestRow>("/requests", { method: "POST", body: JSON.stringify(payload) }),
     update: (id: string, payload: Partial<RequestRow> & Record<string, unknown>) =>
       api<RequestRow>(`/requests/${id}`, { method: "PUT", body: JSON.stringify(payload) }),

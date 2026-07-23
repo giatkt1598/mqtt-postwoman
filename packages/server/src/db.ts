@@ -32,6 +32,7 @@ export function openDatabase(): AppDatabase {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           description TEXT,
+          sortOrder INTEGER NOT NULL DEFAULT 0,
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL
         );
@@ -127,6 +128,10 @@ export function openDatabase(): AppDatabase {
       if (!requestColumns.some((column) => column.name === "sortOrder")) {
         raw.exec("ALTER TABLE requests ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0");
       }
+      const collectionColumns = raw.prepare("PRAGMA table_info(collections)").all() as Array<{ name: string }>;
+      if (!collectionColumns.some((column) => column.name === "sortOrder")) {
+        raw.exec("ALTER TABLE collections ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0");
+      }
     },
   };
 }
@@ -160,7 +165,7 @@ function rowToLog(row: any): MessageLogRow {
 }
 
 export function listCollections(db: Database.Database) {
-  return db.prepare("SELECT * FROM collections ORDER BY createdAt DESC").all().map(rowToCollection);
+  return db.prepare("SELECT * FROM collections ORDER BY sortOrder ASC, createdAt DESC").all().map(rowToCollection);
 }
 
 export function upsertCollection(db: Database.Database, input: Partial<CollectionRow> & { name: string; description?: string | null; id?: string }) {
@@ -175,10 +180,14 @@ export function upsertCollection(db: Database.Database, input: Partial<Collectio
       id,
     );
   } else {
-    db.prepare("INSERT INTO collections (id, name, description, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)").run(
+    const nextSortOrder =
+      input.sortOrder ??
+      (db.prepare("SELECT COALESCE(MAX(sortOrder), -1) + 1 AS next FROM collections").get() as { next: number }).next;
+    db.prepare("INSERT INTO collections (id, name, description, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)").run(
       id,
       input.name,
       input.description ?? null,
+      nextSortOrder,
       timestamp,
       timestamp,
     );
@@ -192,6 +201,28 @@ export function getCollection(db: Database.Database, id: string) {
 
 export function deleteCollection(db: Database.Database, id: string) {
   db.prepare("DELETE FROM collections WHERE id = ?").run(id);
+}
+
+export function reorderCollections(db: Database.Database, collectionIds: string[]) {
+  const collections = listCollections(db);
+  const collectionIdSet = new Set(collections.map((collection) => collection.id));
+  if (
+    collectionIds.length !== collections.length ||
+    collectionIds.some((collectionId) => !collectionIdSet.has(collectionId))
+  ) {
+    throw new Error("Collection order does not match the workspace.");
+  }
+
+  db.transaction(() => {
+    const update = db.prepare(
+      "UPDATE collections SET sortOrder = ?, updatedAt = ? WHERE id = ?",
+    );
+    collectionIds.forEach((collectionId, index) => {
+      update.run(index, nowIso(), collectionId);
+    });
+  })();
+
+  return listCollections(db);
 }
 
 export function duplicateCollection(db: Database.Database, id: string) {
