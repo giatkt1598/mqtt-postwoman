@@ -1007,7 +1007,6 @@ export default function App() {
     await client.logs.clear();
     setHistoryLogs([]);
     setBootstrap((current) => (current ? { ...current, logs: [] } : current));
-    toast.success("History cleared.");
   };
 
   const startConsumer = async () => {
