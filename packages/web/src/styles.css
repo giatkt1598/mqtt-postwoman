@@ -689,6 +689,85 @@ h1 {
   padding: 1rem;
 }
 
+.connections-form {
+  max-width: 720px;
+}
+
+.connection-primary-row,
+.connection-endpoint-row,
+.connection-credentials-row {
+  display: grid;
+  align-items: end;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.connection-primary-row {
+  grid-template-columns: minmax(220px, 1.35fr) minmax(170px, 0.9fr) minmax(
+      170px,
+      0.9fr
+    );
+}
+
+.connection-endpoint-row {
+  grid-template-columns: 92px minmax(0, 1fr) 140px;
+}
+
+.connection-credentials-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.connection-advanced-row {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.connection-advanced-row > label:not(.inline) {
+  min-width: 150px;
+}
+
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 2.8rem;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 0.35rem;
+  bottom: 0.28rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0.35rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.password-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.password-toggle svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .connections-summary {
   display: grid;
   gap: 1rem;
@@ -1370,6 +1449,12 @@ pre {
   }
 
   .consumer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-primary-row,
+  .connection-endpoint-row,
+  .connection-credentials-row {
     grid-template-columns: 1fr;
   }
 }

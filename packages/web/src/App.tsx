@@ -330,6 +330,7 @@ export default function App() {
     text: string;
   } | null>(null);
   const [connectionTestPending, setConnectionTestPending] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [helperDraft, setHelperDraft] = useState({
     id: "",
     name: "requestId",
@@ -1118,11 +1119,13 @@ export default function App() {
   const openNewConnection = () => {
     setBrokerDraft(emptyBrokerDraft());
     setConnectionTestMessage(null);
+    setShowPassword(false);
     setConnectionView("form");
   };
 
   const openEditConnection = (broker: BrokerProfileRow) => {
     setConnectionTestMessage(null);
+    setShowPassword(false);
     setBrokerDraft({
       id: broker.id,
       name: broker.name,
@@ -1152,6 +1155,7 @@ export default function App() {
     setConnectionView("list");
     setBrokerDraft(emptyBrokerDraft());
     setConnectionTestMessage(null);
+    setShowPassword(false);
   };
 
   const disconnectBroker = async (brokerId: string) => {
@@ -2035,7 +2039,7 @@ export default function App() {
                         </label>
                       </div>
                       <div className="inline-row">
-                        <label className="inline">
+                        <label className="inline mb-3">
                           <input
                             type="checkbox"
                             checked={brokerDraft.clean}
@@ -2048,7 +2052,7 @@ export default function App() {
                           />
                           Clean session
                         </label>
-                        <label className="inline switch-control">
+                        <label className="inline switch-control mb-3">
                           <input
                             type="checkbox"
                             checked={brokerDraft.validateCertificate}
@@ -2061,7 +2065,7 @@ export default function App() {
                           />
                           Validate Certificate
                         </label>
-                        <label className="inline switch-control">
+                        <label className="inline switch-control mb-3">
                           <input
                             type="checkbox"
                             checked={brokerDraft.encryption}
@@ -2466,8 +2470,8 @@ export default function App() {
                       {brokerDraft.id ? "Edit connection" : "Create connection"}
                     </span>
                   </div>
-                  <div className="form-grid">
-                    <label>
+                  <div className="connection-primary-row">
+                    <label className="connection-name-field">
                       Name
                       <input
                         value={brokerDraft.name}
@@ -2479,32 +2483,35 @@ export default function App() {
                         }
                       />
                     </label>
-                    <label>
-                      Host
+                    <label className="inline switch-control mb-3">
                       <input
-                        value={brokerDraft.host}
+                        type="checkbox"
+                        checked={brokerDraft.validateCertificate}
                         onChange={(event) =>
                           setBrokerDraft({
                             ...brokerDraft,
-                            host: event.target.value,
+                            validateCertificate: event.target.checked,
                           })
                         }
                       />
+                      Validate certificate
                     </label>
-                    <label>
-                      Port
+                    <label className="inline switch-control mb-3">
                       <input
-                        type="number"
-                        value={brokerDraft.port}
+                        type="checkbox"
+                        checked={brokerDraft.encryption}
                         onChange={(event) =>
                           setBrokerDraft({
                             ...brokerDraft,
-                            port: Number(event.target.value),
+                            encryption: event.target.checked,
                           })
                         }
                       />
+                      Encryption (TLS)
                     </label>
-                    <label>
+                  </div>
+                  <div className="connection-endpoint-row">
+                    <label className="connection-protocol-field">
                       Protocol
                       <select
                         value={brokerDraft.protocol}
@@ -2519,6 +2526,33 @@ export default function App() {
                         <option value="ws">ws://</option>
                       </select>
                     </label>
+                    <label>
+                      Host
+                      <input
+                        value={brokerDraft.host}
+                        onChange={(event) =>
+                          setBrokerDraft({
+                            ...brokerDraft,
+                            host: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="connection-port-field">
+                      Port
+                      <input
+                        type="number"
+                        value={brokerDraft.port}
+                        onChange={(event) =>
+                          setBrokerDraft({
+                            ...brokerDraft,
+                            port: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="connection-credentials-row">
                     <label>
                       Client ID
                       <input
@@ -2545,16 +2579,38 @@ export default function App() {
                     </label>
                     <label>
                       Password
-                      <input
-                        value={brokerDraft.password}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            password: event.target.value,
-                          })
-                        }
-                      />
+                      <span className="password-field">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={brokerDraft.password}
+                          onChange={(event) =>
+                            setBrokerDraft({
+                              ...brokerDraft,
+                              password: event.target.value,
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="password-toggle"
+                          aria-label={
+                            showPassword ? "Hide password" : "Show password"
+                          }
+                          title={
+                            showPassword ? "Hide password" : "Show password"
+                          }
+                          onClick={() => setShowPassword((current) => !current)}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z" />
+                            <circle cx="12" cy="12" r="2.5" />
+                            {!showPassword && <path d="m4 4 16 16" />}
+                          </svg>
+                        </button>
+                      </span>
                     </label>
+                  </div>
+                  <div className="connection-advanced-row">
                     <label>
                       Keep alive
                       <input
@@ -2568,9 +2624,7 @@ export default function App() {
                         }
                       />
                     </label>
-                  </div>
-                  <div className="inline-row">
-                    <label className="inline">
+                    <label className="inline mb-3">
                       <input
                         type="checkbox"
                         checked={brokerDraft.clean}
@@ -2583,33 +2637,7 @@ export default function App() {
                       />
                       Clean session
                     </label>
-                    <label className="inline switch-control">
-                      <input
-                        type="checkbox"
-                        checked={brokerDraft.validateCertificate}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            validateCertificate: event.target.checked,
-                          })
-                        }
-                      />
-                      Validate Certificate
-                    </label>
-                    <label className="inline switch-control">
-                      <input
-                        type="checkbox"
-                        checked={brokerDraft.encryption}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            encryption: event.target.checked,
-                          })
-                        }
-                      />
-                      Encryption (TLS)
-                    </label>
-                    <label className="inline">
+                    <label>
                       Reconnect period
                       <input
                         type="number"
@@ -2645,7 +2673,7 @@ export default function App() {
                       className="danger"
                       disabled={!brokerDraft.id}
                     >
-                      Delete current
+                      Delete
                     </button>
                   </div>
                   {connectionTestMessage && (

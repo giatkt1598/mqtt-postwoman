@@ -7,6 +7,8 @@ services:
       - PORT=3000
       - SQLITE_PATH=/data/mqtt-postwoman.db
       - MQTT_POSTWOMAN_ORIGIN=http://localhost:5173
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - app-data:/data
     depends_on:
@@ -23,6 +25,19 @@ services:
     image: eclipse-mosquitto:2
     ports:
       - "1884:1883"
+
+  mosquitto-3:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1885:1883"
+
+  mosquitto-4:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1886:8883"
+    volumes:
+      - ./docker/mosquitto-tls.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/certs:/mosquitto/certs:ro
 
 volumes:
   app-data:

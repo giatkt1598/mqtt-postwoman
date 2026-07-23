@@ -8,3 +8,4 @@ data
 *.db-journal
 *.log
 .env
+docker/certs/
