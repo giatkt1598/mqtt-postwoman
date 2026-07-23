@@ -2395,7 +2395,7 @@ export default function App() {
               </div>
 
               {connectionView === "list" ? (
-                <div className="connection-list">
+                <div className="connection-list mt-3">
                   {brokers.length === 0 ? (
                     <div className="empty-state">
                       <strong>No connections yet</strong>
@@ -2436,6 +2436,14 @@ export default function App() {
                             <button onClick={() => openEditConnection(broker)}>
                               Edit
                             </button>
+                            {status?.connected && (
+                              <button
+                                className="danger"
+                                onClick={() => disconnectBroker(broker.id)}
+                              >
+                                Disconnect
+                              </button>
+                            )}
                             <button
                               className={
                                 status?.connected ? "connected" : "primary"

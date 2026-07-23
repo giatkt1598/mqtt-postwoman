@@ -553,7 +553,7 @@ h1 {
 .editor-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(340px, 0.85fr);
-  height: calc(100vh - 10.5rem);
+  height: calc(100vh - 11rem);
   min-height: 0;
   gap: 1rem;
   align-items: stretch;
