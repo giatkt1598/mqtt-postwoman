@@ -2662,19 +2662,20 @@ export default function App() {
                       Save
                     </button>
                     <button onClick={cancelConnectionForm}>Cancel</button>
-                    <button
-                      onClick={() =>
-                        askDeleteConfirmation(
-                          "Delete connection",
-                          "Delete this connection?",
-                          deleteBroker,
-                        )
-                      }
-                      className="danger"
-                      disabled={!brokerDraft.id}
-                    >
-                      Delete
-                    </button>
+                    {brokerDraft.id && (
+                      <button
+                        onClick={() =>
+                          askDeleteConfirmation(
+                            "Delete connection",
+                            "Delete this connection?",
+                            deleteBroker,
+                          )
+                        }
+                        className="danger"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                   {connectionTestMessage && (
                     <div

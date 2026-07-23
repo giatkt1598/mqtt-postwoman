@@ -114,6 +114,8 @@ export class RuntimeManager {
     const url = `${this.transportProtocol(config)}://${config.host}:${config.port}`;
     const client = mqtt.connect(url, {
       ...this.buildOptionsFromConnection(config),
+      // A test must not reuse the saved client id, especially for persistent sessions.
+      clientId: `mqtt-postwoman-test-${createId().slice(0, 12)}`,
       reconnectPeriod: 0,
       connectTimeout: 10000,
     });
@@ -209,9 +211,16 @@ export class RuntimeManager {
 
     const existing = this.brokers.get(profileId);
     if (existing) {
-      existing.refCount += 1;
-      await existing.ready;
-      return existing;
+      if (!existing.connected) {
+        // Do not reuse a client that was closed by the broker or by a previous
+        // failed connection attempt. Create a fresh connection instead.
+        this.brokers.delete(profileId);
+        existing.client.end(true);
+      } else {
+        existing.refCount += 1;
+        await existing.ready;
+        return existing;
+      }
     }
 
     const url = `${this.transportProtocol(profile)}://${profile.host}:${profile.port}`;
