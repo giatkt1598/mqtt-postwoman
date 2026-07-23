@@ -31,10 +31,26 @@ test("resolves now token with a Day.js format", () => {
   assert.match(String(payload.publishDate), /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test("resolves env token", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"name":"{{env.NAME}}"}', undefined, { NAME: "mqtt" });
+test("resolves variable token", () => {
+  const result = resolveTemplatePayload(fakeDb, '{"name":"{{var.NAME}}"}', undefined, { NAME: "mqtt" });
   const payload = result.value as Record<string, unknown>;
   assert.equal(payload.name, "mqtt");
+});
+
+test("resolves variables in topic templates", () => {
+  const result = resolveTemplatePayload(
+    fakeDb,
+    "device/{{var.DEVICE_ID}}/status",
+    undefined,
+    { DEVICE_ID: "device-01" },
+  );
+  assert.equal(result.text, "device/device-01/status");
+});
+
+test("does not resolve the removed env token", () => {
+  const result = resolveTemplatePayload(fakeDb, '{"name":"{{env.NAME}}"}', undefined, { NAME: "mqtt" });
+  const payload = result.value as Record<string, unknown>;
+  assert.equal(payload.name, "{{env.NAME}}");
 });
 
 test("resolves sequence token with batch offset", () => {

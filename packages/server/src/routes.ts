@@ -8,31 +8,36 @@ import {
   deleteBrokerProfile,
   deleteCollection,
   deleteConsumerSession,
-  deleteEnvironment,
+  deleteVariable,
+  deleteVariableCollection,
   deleteHelper,
   deleteRequest,
   duplicateCollection,
   getBrokerProfile,
   getCollection,
   getConsumerSession,
-  getEnvironment,
+  getVariable,
+  getVariableCollection,
   getHelper,
   getRequest,
   listBrokerProfiles,
   listCollections,
   listConsumerSessions,
-  listEnvironments,
+  listVariables,
+  listVariableCollections,
   listHelpers,
   listLogs,
   listRequests,
   openDatabase,
   upsertBrokerProfile,
   upsertCollection,
-  upsertEnvironment,
+  upsertVariable,
+  upsertVariableCollection,
   upsertHelper,
   upsertRequest,
   reorderRequests,
   reorderCollections,
+  reorderVariables,
 } from "./db";
 import { RuntimeManager } from "./runtime";
 import { resolveTemplatePayload } from "./template";
@@ -46,6 +51,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     id: z.string().optional(),
     name: z.string().min(1),
     description: z.string().optional().nullable(),
+    variableCollectionId: z.string().optional().nullable(),
   });
 
   const requestSchema = z.object({
@@ -57,13 +63,19 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     qos: z.number().int().min(0).max(2).default(0),
     retain: z.boolean().default(false),
     brokerProfileId: z.string().optional().nullable(),
-    environmentId: z.string().optional().nullable(),
   });
 
-  const environmentSchema = z.object({
+  const variableCollectionSchema = z.object({
     id: z.string().optional(),
-    name: z.string().min(1),
-    variablesJson: z.string().default("{}"),
+    name: z.string().trim().min(1),
+  });
+
+  const variableSchema = z.object({
+    id: z.string().optional(),
+    variableCollectionId: z.string().min(1),
+    name: z.string().trim().min(1),
+    value: z.string().default(""),
+    sortOrder: z.number().int().nonnegative().optional(),
   });
 
   const brokerSchema = z.object({
@@ -162,19 +174,65 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     }
   });
 
-  router.get("/environments", (_req, res) => res.json(listEnvironments(db.raw)));
-  router.post("/environments", (req, res) => {
-    const input = environmentSchema.parse(req.body);
-    const saved = upsertEnvironment(db.raw, input);
-    res.status(201).json(saved);
+  router.get("/variable-collections", (_req, res) => res.json(listVariableCollections(db.raw)));
+  router.post("/variable-collections", (req, res) => {
+    const input = variableCollectionSchema.parse(req.body);
+    try {
+      const saved = upsertVariableCollection(db.raw, input);
+      res.status(201).json(saved);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Unable to save variable collection" });
+    }
   });
-  router.put("/environments/:id", (req, res) => {
-    const input = environmentSchema.parse({ ...req.body, id: req.params.id });
-    const saved = upsertEnvironment(db.raw, input);
-    res.json(saved);
+  router.put("/variable-collections/:id", (req, res) => {
+    const input = variableCollectionSchema.parse({ ...req.body, id: req.params.id });
+    try {
+      const saved = upsertVariableCollection(db.raw, input);
+      res.json(saved);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Unable to save variable collection" });
+    }
   });
-  router.delete("/environments/:id", (req, res) => {
-    deleteEnvironment(db.raw, req.params.id);
+  router.delete("/variable-collections/:id", (req, res) => {
+    deleteVariableCollection(db.raw, req.params.id);
+    res.status(204).end();
+  });
+  router.get("/variable-collections/:id/variables", (req, res) => {
+    res.json(listVariables(db.raw, req.params.id));
+  });
+  router.post("/variable-collections/:id/variables", (req, res) => {
+    const input = variableSchema.parse({ ...req.body, variableCollectionId: req.params.id });
+    try {
+      const saved = upsertVariable(db.raw, input);
+      res.status(201).json(saved);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Unable to save variable" });
+    }
+  });
+  router.put("/variable-collections/:id/variables/order", (req, res) => {
+    const schema = z.object({ variableIds: z.array(z.string()) });
+    try {
+      const input = schema.parse(req.body);
+      res.json(reorderVariables(db.raw, req.params.id, input.variableIds));
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Unable to reorder variables" });
+    }
+  });
+  router.put("/variables/:id", (req, res) => {
+    const current = getVariable(db.raw, req.params.id);
+    if (!current) {
+      res.status(404).json({ message: "Variable not found" });
+      return;
+    }
+    const input = variableSchema.parse({ ...current, ...req.body, id: req.params.id });
+    try {
+      res.json(upsertVariable(db.raw, input));
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Unable to save variable" });
+    }
+  });
+  router.delete("/variables/:id", (req, res) => {
+    deleteVariable(db.raw, req.params.id);
     res.status(204).end();
   });
 
@@ -319,7 +377,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     payloadTemplate: z.string().optional(),
     qos: z.number().int().min(0).max(2).default(0),
     retain: z.boolean().default(false),
-    environmentId: z.string().optional().nullable(),
+    variableCollectionId: z.string().optional().nullable(),
     variables: z.record(z.string(), z.any()).default({}),
   });
 
@@ -347,17 +405,32 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       return;
     }
 
+    const variableCollectionId =
+      input.variableCollectionId ??
+      (request ? getCollection(db.raw, request.collectionId)?.variableCollectionId : null) ??
+      null;
+    const resolvedTopic = resolveTemplatePayload(
+      db,
+      topic,
+      variableCollectionId,
+      parseObjectLike(input.variables),
+      0,
+    ).text;
+    if (!resolvedTopic.trim()) {
+      res.status(400).json({ message: "Topic is required" });
+      return;
+    }
     const payload = resolveTemplatePayload(
       db,
       payloadTemplate,
-      input.environmentId ?? request?.environmentId ?? null,
+      variableCollectionId,
       parseObjectLike(input.variables),
       0,
     );
 
     const result = await runtime.publish(
       brokerProfileId,
-      topic,
+      resolvedTopic,
       payload,
       {
       qos: (input.qos ?? request?.qos ?? 0) as 0 | 1 | 2,
@@ -376,7 +449,7 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       brokerProfileId: z.string().optional(),
       topic: z.string().optional(),
       payloadTemplate: z.string().optional(),
-      environmentId: z.string().optional().nullable(),
+      variableCollectionId: z.string().optional().nullable(),
       variables: z.record(z.string(), z.any()).default({}),
       count: z.number().int().min(1).max(1000).default(10),
       delayMs: z.number().int().min(0).max(60000).default(0),
@@ -396,6 +469,10 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
       return;
     }
 
+    const variableCollectionId =
+      input.variableCollectionId ??
+      (request ? getCollection(db.raw, request.collectionId)?.variableCollectionId : null) ??
+      null;
     const items =
       input.items?.length
         ? input.items.map((item, index) => ({
@@ -417,16 +494,27 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
         res.status(400).json({ message: "Topic is required" });
         return;
       }
+      const resolvedTopic = resolveTemplatePayload(
+        db,
+        item.topic,
+        variableCollectionId,
+        item.variables,
+        item.index,
+      ).text;
+      if (!resolvedTopic.trim()) {
+        res.status(400).json({ message: "Topic is required" });
+        return;
+      }
       const payload = resolveTemplatePayload(
         db,
         item.payloadTemplate,
-        input.environmentId ?? request?.environmentId ?? null,
+        variableCollectionId,
         item.variables,
         item.index,
       );
       const result = await runtime.publish(
         brokerProfileId,
-        item.topic,
+        resolvedTopic,
         payload,
         {
           qos: (input.qos ?? request?.qos ?? 0) as 0 | 1 | 2,
@@ -456,11 +544,11 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
   router.post("/templates/resolve", (req, res) => {
     const schema = z.object({
       template: z.string(),
-      environmentId: z.string().optional().nullable(),
+      variableCollectionId: z.string().optional().nullable(),
       variables: z.record(z.string(), z.any()).default({}),
     });
     const input = schema.parse(req.body);
-    const resolved = resolveTemplatePayload(db, input.template, input.environmentId ?? null, parseObjectLike(input.variables));
+    const resolved = resolveTemplatePayload(db, input.template, input.variableCollectionId ?? null, parseObjectLike(input.variables));
     res.json(resolved);
   });
 
@@ -472,7 +560,8 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     res.json({
       collections: listCollections(db.raw),
       requests: listRequests(db.raw),
-      environments: listEnvironments(db.raw),
+      variableCollections: listVariableCollections(db.raw),
+      variables: listVariables(db.raw),
       brokers: listBrokerProfiles(db.raw),
       helpers: listHelpers(db.raw),
       consumerSessions: listConsumerSessions(db.raw),

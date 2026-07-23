@@ -1,7 +1,7 @@
 import { TemplateHelperRow } from "../types";
 
 export interface TemplateContext {
-  environment?: Record<string, unknown>;
+  variableCollection?: Record<string, unknown>;
   variables?: Record<string, unknown>;
   helpers?: Record<string, TemplateHelperRow>;
   sequenceOffset?: number;

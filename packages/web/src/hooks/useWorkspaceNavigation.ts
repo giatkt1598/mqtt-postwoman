@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-export type WorkspaceTab = "publishers" | "consumers" | "connections";
+export type WorkspaceTab = "publishers" | "consumers" | "variables" | "connections";
 export type ConnectionView = "list" | "form";
 
 export function useWorkspaceNavigation() {

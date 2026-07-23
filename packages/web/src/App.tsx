@@ -11,6 +11,7 @@ import {
   ConnectionsPage,
   ConsumersPage,
   PublishersPage,
+  VariablesPage,
 } from "./pages";
 import {
   beautifyXml,
@@ -20,7 +21,6 @@ import {
   isRequestModified,
   joinTopics,
   mergeLogs,
-  parseJsonObject,
   randomTopicColor,
   requestToDraft,
   toPrettyJson,
@@ -33,16 +33,19 @@ import {
   ConsumerMessageEvent,
   ConsumerSessionRow,
   DraftRequest,
-  EnvironmentRow,
+  VariableCollectionRow,
   MessageLogRow,
   RequestRow,
   TemplateHelperRow,
 } from "./models";
 import { useWorkspaceNavigation } from "./hooks";
-import { WorkspaceProvider, type WorkspaceContextValue } from "./contexts";
+import {
+  WorkspaceProvider,
+  type VariableDraftRow,
+  type WorkspaceContextValue,
+} from "./contexts";
 
-type AssetTab = "environments" | "brokers" | "helpers";
-type RightTab = "history" | "functions" | "assets";
+type RightTab = "history" | "functions";
 type CollectionModal = "create" | "edit" | null;
 type PayloadFormat = "raw" | "xml" | "json";
 type InactiveConsumerTopic = {
@@ -110,7 +113,6 @@ export default function App() {
     () => localStorage.getItem("mqtt-postwoman.activeConnectionId") ?? "",
   );
   const [rightTab, setRightTab] = useState<RightTab>("history");
-  const [assetTab, setAssetTab] = useState<AssetTab>("environments");
   const [draft, setDraft] = useState<DraftRequest>(emptyDraft());
   const [requestDrafts, setRequestDrafts] = useState<
     Record<string, DraftRequest>
@@ -153,10 +155,11 @@ export default function App() {
   const [draggedCollectionId, setDraggedCollectionId] = useState<string | null>(null);
   const [dragOverRequestId, setDragOverRequestId] = useState<string | null>(null);
   const [dragOverCollectionId, setDragOverCollectionId] = useState<string | null>(null);
-  const [envDraft, setEnvDraft] = useState({
+  const [selectedVariableCollectionId, setSelectedVariableCollectionId] =
+    useState("");
+  const [variableCollectionDraft, setVariableCollectionDraft] = useState({
     id: "",
-    name: "local",
-    variablesJson: '{\n  "env": "local"\n}',
+    name: "",
   });
   const [brokerDraft, setBrokerDraft] = useState(emptyBrokerDraft());
   const [connectionTestMessage, setConnectionTestMessage] = useState<{
@@ -378,7 +381,8 @@ export default function App() {
   }, []);
 
   const collections = bootstrap?.collections ?? [];
-  const environments = bootstrap?.environments ?? [];
+  const variableCollections = bootstrap?.variableCollections ?? [];
+  const variables = bootstrap?.variables ?? [];
   const brokers = bootstrap?.brokers ?? [];
   const helpers = bootstrap?.helpers ?? [];
   const consumerSessions = bootstrap?.consumerSessions ?? [];
@@ -444,13 +448,36 @@ export default function App() {
     }
   }, [draft]);
 
-  useEffect(() => {
-    setEnvDraft((current) => current);
-  }, [assetTab]);
-
   const selectedCollection = collections.find(
     (collection) => collection.id === selectedCollectionId,
   );
+
+  const updateCollectionVariables = async (variableCollectionId: string) => {
+    if (!selectedCollection) return;
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            collections: current.collections.map((collection) =>
+              collection.id === selectedCollection.id
+                ? { ...collection, variableCollectionId: variableCollectionId || null }
+                : collection,
+            ),
+          }
+        : current,
+    );
+    try {
+      await client.collections.update(selectedCollection.id, {
+        name: selectedCollection.name,
+        description: selectedCollection.description,
+        variableCollectionId: variableCollectionId || null,
+      });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update Variables");
+      await refresh();
+    }
+  };
 
   useEffect(() => {
     if (selectedCollection) {
@@ -480,7 +507,6 @@ export default function App() {
       emptyDraft(
         collection.id,
         fallbackConnectionId,
-        environments[0]?.id ?? "",
       ),
     );
   };
@@ -823,13 +849,11 @@ export default function App() {
     const { id: _draftId, ...newRequestPayload } = emptyDraft(
       collection.id,
       fallbackConnectionId,
-      environments[0]?.id ?? "",
     );
     const saved = await client.requests.create({
       ...newRequestPayload,
       name: "New Request",
       brokerProfileId: newRequestPayload.brokerProfileId || null,
-      environmentId: newRequestPayload.environmentId || null,
     });
     await refresh();
     setSelectedCollectionId(collection.id);
@@ -858,7 +882,6 @@ export default function App() {
     const payload = {
       ...draft,
       brokerProfileId: draft.brokerProfileId || null,
-      environmentId: draft.environmentId || null,
     };
     const saved = draft.id
       ? await client.requests.update(draft.id, payload)
@@ -887,7 +910,6 @@ export default function App() {
       emptyDraft(
         selectedCollectionId,
         fallbackConnectionId,
-        environments[0]?.id ?? "",
       ),
     );
   };
@@ -905,7 +927,6 @@ export default function App() {
         emptyDraft(
           selectedCollectionId,
           fallbackConnectionId,
-          environments[0]?.id ?? "",
         ),
       );
     }
@@ -923,7 +944,6 @@ export default function App() {
         qos: request.qos,
         retain: Boolean(request.retain),
         brokerProfileId: request.brokerProfileId,
-        environmentId: request.environmentId,
       });
       const collectionRequests = (bootstrap?.requests ?? []).filter(
         (item) => item.collectionId === request.collectionId,
@@ -979,7 +999,6 @@ export default function App() {
       delayMs: batchDelayMs,
       qos: draft.qos,
       retain: draft.retain,
-      environmentId: draft.environmentId || undefined,
       variables: {},
     });
   };
@@ -1131,30 +1150,67 @@ export default function App() {
     });
   };
 
-  const saveEnvironment = async () => {
-    if (envDraft.id) {
-      await client.environments.update(envDraft.id, {
-        name: envDraft.name,
-        variablesJson: envDraft.variablesJson,
-      });
-    } else {
-      await client.environments.create({
-        name: envDraft.name,
-        variablesJson: envDraft.variablesJson,
-      });
-    }
-    await refresh();
-    setAssetTab("environments");
+  const selectVariableCollection = (collection: VariableCollectionRow) => {
+    setSelectedVariableCollectionId(collection.id);
+    setVariableCollectionDraft({ id: collection.id, name: collection.name });
   };
 
-  const deleteEnvironment = async () => {
-    if (!envDraft.id) return;
-    await client.environments.remove(envDraft.id);
-    setEnvDraft({
-      id: "",
-      name: "local",
-      variablesJson: '{\n  "env": "local"\n}',
-    });
+  const openNewVariableCollection = () => {
+    setSelectedVariableCollectionId("");
+    setVariableCollectionDraft({ id: "", name: "" });
+  };
+
+  const saveVariableCollection = async () => {
+    if (!variableCollectionDraft.name.trim()) return undefined;
+    const saved = variableCollectionDraft.id
+      ? await client.variableCollections.update(variableCollectionDraft.id, {
+          name: variableCollectionDraft.name.trim(),
+        })
+      : await client.variableCollections.create({
+          name: variableCollectionDraft.name.trim(),
+        });
+    await refresh();
+    setSelectedVariableCollectionId(saved.id);
+    setVariableCollectionDraft({ id: saved.id, name: saved.name });
+    return saved.id;
+  };
+
+  const deleteVariableCollection = async () => {
+    if (!variableCollectionDraft.id) return;
+    await client.variableCollections.remove(variableCollectionDraft.id);
+    setSelectedVariableCollectionId("");
+    setVariableCollectionDraft({ id: "", name: "" });
+    await refresh();
+  };
+
+  const saveVariables = async (collectionId: string, rows: VariableDraftRow[]) => {
+    const currentRows = variables.filter(
+      (variable) => variable.variableCollectionId === collectionId,
+    );
+    const draftRows = rows.filter((row) => row.name.trim() || row.value);
+    const draftIds = new Set(draftRows.map((row) => row.id).filter(Boolean));
+    for (const variable of currentRows) {
+      if (!draftIds.has(variable.id)) {
+        await client.variableCollections.removeVariable(variable.id);
+      }
+    }
+    const persistedIds: string[] = [];
+    for (const row of draftRows) {
+      if (row.id) {
+        const saved = await client.variableCollections.updateVariable(row.id, {
+          name: row.name.trim(),
+          value: row.value,
+        });
+        persistedIds.push(saved.id);
+      } else {
+        const saved = await client.variableCollections.createVariable(collectionId, {
+          name: row.name.trim(),
+          value: row.value,
+        });
+        persistedIds.push(saved.id);
+      }
+    }
+    await client.variableCollections.reorderVariables(collectionId, persistedIds);
     await refresh();
   };
 
@@ -1334,17 +1390,6 @@ export default function App() {
     await refresh();
   };
 
-  const currentEnvValue = parseJsonObject(envDraft.variablesJson);
-  const selectedEnvJson = draft.environmentId
-    ? (environments.find((env) => env.id === draft.environmentId)
-        ?.variablesJson ?? "{}")
-    : "{}";
-  const resolvedPreview = useMemo(() => {
-    return currentEnvValue
-      ? JSON.stringify(currentEnvValue, null, 2)
-      : envDraft.variablesJson;
-  }, [currentEnvValue, envDraft.variablesJson]);
-
   const handleCollectionMenuToggle = (collectionId: string, anchor: HTMLElement) => {
     if (collectionMenuId === collectionId) {
       closeActionPopover();
@@ -1453,6 +1498,16 @@ export default function App() {
       setConnectionView("list");
       setMainTab("connections");
     },
+    variableCollections,
+    variables,
+    selectedVariableCollectionId,
+    variableCollectionDraft,
+    setVariableCollectionDraft,
+    selectVariableCollection,
+    openNewVariableCollection,
+    saveVariableCollection,
+    saveVariables,
+    deleteVariableCollection,
   };
 
   return (
@@ -1613,17 +1668,15 @@ export default function App() {
                   />
                 </label>
                 <label>
-                  Environment
+                    Variables
                   <select
-                    value={draft.environmentId}
-                    onChange={(event) =>
-                      setDraft({ ...draft, environmentId: event.target.value })
-                    }
+                    value={selectedCollection?.variableCollectionId ?? ""}
+                    onChange={(event) => void updateCollectionVariables(event.target.value)}
                   >
-                    <option value="">No env</option>
-                    {environments.map((environment) => (
-                      <option key={environment.id} value={environment.id}>
-                        {environment.name}
+                    <option value="">No variables</option>
+                    {variableCollections.map((collection) => (
+                      <option key={collection.id} value={collection.id}>
+                        {collection.name}
                       </option>
                     ))}
                   </select>
@@ -1871,415 +1924,12 @@ export default function App() {
                 </div>
               )}
 
-              {rightTab === "assets" && (
-                <div className="stack">
-                  <div className="tab-row compact">
-                    <button
-                      className={assetTab === "environments" ? "active" : ""}
-                      onClick={() => setAssetTab("environments")}
-                    >
-                      Envs
-                    </button>
-                    <button
-                      className={assetTab === "brokers" ? "active" : ""}
-                      onClick={() => setAssetTab("brokers")}
-                    >
-                      Brokers
-                    </button>
-                    <button
-                      className={assetTab === "helpers" ? "active" : ""}
-                      onClick={() => setAssetTab("helpers")}
-                    >
-                      Helpers
-                    </button>
-                  </div>
-
-                  {assetTab === "environments" && (
-                    <div className="card-section">
-                      <div className="section-head">
-                        <span>Environment CRUD</span>
-                        <div className="button-row">
-                          <button onClick={saveEnvironment} className="primary">
-                            Save env
-                          </button>
-                          <button
-                            onClick={() =>
-                              askDeleteConfirmation(
-                                "Delete environment",
-                                "Delete this environment?",
-                                deleteEnvironment,
-                              )
-                            }
-                            className="danger"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                      <label>
-                        Name
-                        <input
-                          value={envDraft.name}
-                          onChange={(event) =>
-                            setEnvDraft({
-                              ...envDraft,
-                              name: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        Variables JSON
-                        <textarea
-                          rows={10}
-                          value={envDraft.variablesJson}
-                          onChange={(event) =>
-                            setEnvDraft({
-                              ...envDraft,
-                              variablesJson: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <div className="mini-list">
-                        {environments.map((environment) => (
-                          <button
-                            key={environment.id}
-                            className="mini-row"
-                            onClick={() =>
-                              setEnvDraft({
-                                id: environment.id,
-                                name: environment.name,
-                                variablesJson: environment.variablesJson,
-                              })
-                            }
-                          >
-                            <span>{environment.name}</span>
-                            <small>{environment.id.slice(0, 8)}</small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {assetTab === "brokers" && (
-                    <div className="card-section">
-                      <div className="section-head">
-                        <span>Broker profile CRUD</span>
-                        <div className="button-row">
-                          <button onClick={saveBroker} className="primary">
-                            Save broker
-                          </button>
-                          <button
-                            onClick={() =>
-                              askDeleteConfirmation(
-                                "Delete broker",
-                                "Delete this broker connection?",
-                                deleteBroker,
-                              )
-                            }
-                            className="danger"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                      <div className="form-grid">
-                        <label>
-                          Name
-                          <input
-                            value={brokerDraft.name}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                name: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Host
-                          <input
-                            value={brokerDraft.host}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                host: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Port
-                          <input
-                            type="number"
-                            value={brokerDraft.port}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                port: Number(event.target.value),
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Protocol
-                          <select
-                            value={brokerDraft.protocol}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                protocol: event.target.value,
-                              })
-                            }
-                          >
-                            <option value="mqtt">mqtt://</option>
-                            <option value="ws">ws://</option>
-                          </select>
-                        </label>
-                        <label>
-                          Client ID
-                          <input
-                            value={brokerDraft.clientId}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                clientId: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Username
-                          <input
-                            value={brokerDraft.username}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                username: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Password
-                          <input
-                            value={brokerDraft.password}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                password: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Keep alive
-                          <input
-                            type="number"
-                            value={brokerDraft.keepAlive}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                keepAlive: Number(event.target.value),
-                              })
-                            }
-                          />
-                        </label>
-                      </div>
-                      <div className="inline-row">
-                        <label className="inline mb-3">
-                          <input
-                            type="checkbox"
-                            checked={brokerDraft.clean}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                clean: event.target.checked,
-                              })
-                            }
-                          />
-                          Clean session
-                        </label>
-                        <label className="inline switch-control mb-3">
-                          <input
-                            type="checkbox"
-                            checked={brokerDraft.validateCertificate}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                validateCertificate: event.target.checked,
-                              })
-                            }
-                          />
-                          Validate Certificate
-                        </label>
-                        <label className="inline switch-control mb-3">
-                          <input
-                            type="checkbox"
-                            checked={brokerDraft.encryption}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                encryption: event.target.checked,
-                              })
-                            }
-                          />
-                          Encryption (TLS)
-                        </label>
-                        <label className="inline">
-                          Reconnect period
-                          <input
-                            type="number"
-                            value={brokerDraft.reconnectPeriod}
-                            onChange={(event) =>
-                              setBrokerDraft({
-                                ...brokerDraft,
-                                reconnectPeriod: Number(event.target.value),
-                              })
-                            }
-                          />
-                        </label>
-                      </div>
-                      <div className="mini-list">
-                        {brokers.map((broker) => (
-                          <button
-                            key={broker.id}
-                            className="mini-row"
-                            onClick={() =>
-                              setBrokerDraft({
-                                id: broker.id,
-                                name: broker.name,
-                                host: broker.host,
-                                port: broker.port,
-                                protocol:
-                                  broker.protocol === "ws" ||
-                                  broker.protocol === "wss"
-                                    ? "ws"
-                                    : "mqtt",
-                                validateCertificate:
-                                  broker.validateCertificate !== 0,
-                                encryption:
-                                  broker.encryption !== 0 ||
-                                  broker.protocol === "mqtts" ||
-                                  broker.protocol === "wss",
-                                username: broker.username ?? "",
-                                password: broker.password ?? "",
-                                clientId: broker.clientId,
-                                clean: Boolean(broker.clean),
-                                keepAlive: broker.keepAlive,
-                                reconnectPeriod: broker.reconnectPeriod,
-                                caCert: broker.caCert ?? "",
-                                clientCert: broker.clientCert ?? "",
-                                clientKey: broker.clientKey ?? "",
-                              })
-                            }
-                          >
-                            <span>{broker.name}</span>
-                            <small>
-                              {broker.host}:{broker.port} · {broker.protocol}
-                            </small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {assetTab === "helpers" && (
-                    <div className="card-section">
-                      <div className="section-head">
-                        <span>Template helper CRUD</span>
-                        <div className="button-row">
-                          <button onClick={saveHelper} className="primary">
-                            Save helper
-                          </button>
-                          <button
-                            onClick={() =>
-                              askDeleteConfirmation(
-                                "Delete helper",
-                                "Delete this template helper?",
-                                deleteHelper,
-                              )
-                            }
-                            className="danger"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                      <div className="form-grid two-col">
-                        <label>
-                          Name
-                          <input
-                            value={helperDraft.name}
-                            onChange={(event) =>
-                              setHelperDraft({
-                                ...helperDraft,
-                                name: event.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          Kind
-                          <select
-                            value={helperDraft.kind}
-                            onChange={(event) =>
-                              setHelperDraft({
-                                ...helperDraft,
-                                kind: event.target
-                                  .value as TemplateHelperRow["kind"],
-                              })
-                            }
-                          >
-                            <option value="literal">literal</option>
-                            <option value="now">now</option>
-                            <option value="uuid">uuid</option>
-                            <option value="randomInt">randomInt</option>
-                            <option value="env">env</option>
-                          </select>
-                        </label>
-                      </div>
-                      <label>
-                        Config JSON
-                        <textarea
-                          rows={10}
-                          value={helperDraft.configJson}
-                          onChange={(event) =>
-                            setHelperDraft({
-                              ...helperDraft,
-                              configJson: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <div className="mini-list">
-                        {helpers.map((helper) => (
-                          <button
-                            key={helper.id}
-                            className="mini-row"
-                            onClick={() =>
-                              setHelperDraft({
-                                id: helper.id,
-                                name: helper.name,
-                                kind: helper.kind,
-                                configJson: helper.configJson,
-                              })
-                            }
-                          >
-                            <span>{helper.name}</span>
-                            <small>{helper.kind}</small>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </PublishersPage>
         ) : mainTab === "consumers" ? (
           <ConsumersPage />
+        ) : mainTab === "variables" ? (
+          <VariablesPage />
         ) : (
           <ConnectionsPage />
         )}

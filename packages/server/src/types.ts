@@ -4,6 +4,7 @@ export interface CollectionRow {
   id: Id;
   name: string;
   description: string | null;
+  variableCollectionId: Id | null;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -18,16 +19,24 @@ export interface RequestRow {
   qos: number;
   retain: number;
   brokerProfileId: Id | null;
-  environmentId: Id | null;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface EnvironmentRow {
+export interface VariableCollectionRow {
   id: Id;
   name: string;
-  variablesJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VariableRow {
+  id: Id;
+  variableCollectionId: Id;
+  name: string;
+  value: string;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -95,7 +104,8 @@ export interface MessageLogRow {
 export interface BootstrapState {
   collections: CollectionRow[];
   requests: RequestRow[];
-  environments: EnvironmentRow[];
+  variableCollections: VariableCollectionRow[];
+  variables: VariableRow[];
   brokers: BrokerProfileRow[];
   helpers: TemplateHelperRow[];
   consumerSessions: ConsumerSessionRow[];

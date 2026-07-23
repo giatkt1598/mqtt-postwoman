@@ -5,11 +5,12 @@ import {
   BrokerProfileRow,
   CollectionRow,
   ConsumerSessionRow,
-  EnvironmentRow,
   HelperKind,
   MessageLogRow,
   RequestRow,
   TemplateHelperRow,
+  VariableCollectionRow,
+  VariableRow,
 } from "./types";
 import { createId, nowIso } from "./utils";
 
@@ -32,17 +33,29 @@ export function openDatabase(): AppDatabase {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           description TEXT,
+          variableCollectionId TEXT,
           sortOrder INTEGER NOT NULL DEFAULT 0,
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS environments (
+        CREATE TABLE IF NOT EXISTS variable_collections (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
-          variablesJson TEXT NOT NULL,
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS variables (
+          id TEXT PRIMARY KEY,
+          variableCollectionId TEXT NOT NULL,
+          name TEXT NOT NULL,
+          value TEXT NOT NULL,
+          sortOrder INTEGER NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          UNIQUE(variableCollectionId, name),
+          FOREIGN KEY(variableCollectionId) REFERENCES variable_collections(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS broker_profiles (
@@ -75,7 +88,6 @@ export function openDatabase(): AppDatabase {
           qos INTEGER NOT NULL,
           retain INTEGER NOT NULL,
           brokerProfileId TEXT,
-          environmentId TEXT,
           sortOrder INTEGER NOT NULL DEFAULT 0,
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL,
@@ -132,6 +144,80 @@ export function openDatabase(): AppDatabase {
       if (!collectionColumns.some((column) => column.name === "sortOrder")) {
         raw.exec("ALTER TABLE collections ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0");
       }
+      if (!collectionColumns.some((column) => column.name === "variableCollectionId")) {
+        raw.exec("ALTER TABLE collections ADD COLUMN variableCollectionId TEXT");
+      }
+
+      const legacyEnvironments = raw
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'environments'")
+        .get() as { name?: string } | undefined;
+      const migratedRequestColumns = raw.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>;
+      if (
+        migratedRequestColumns.some((column) => column.name === "environmentId") &&
+        !migratedRequestColumns.some((column) => column.name === "variableCollectionId")
+      ) {
+        raw.exec("ALTER TABLE requests RENAME COLUMN environmentId TO variableCollectionId");
+      }
+      if (legacyEnvironments?.name) {
+        const legacyRows = raw.prepare("SELECT * FROM environments").all() as Array<{
+          id: string;
+          name: string;
+          variablesJson: string;
+          createdAt: string;
+          updatedAt: string;
+        }>;
+        const migrate = raw.transaction(() => {
+          const insertCollection = raw.prepare(
+            "INSERT OR IGNORE INTO variable_collections (id, name, createdAt, updatedAt) VALUES (?, ?, ?, ?)",
+          );
+          const insertVariable = raw.prepare(
+            "INSERT OR IGNORE INTO variables (id, variableCollectionId, name, value, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          );
+          for (const row of legacyRows) {
+            insertCollection.run(row.id, row.name, row.createdAt, row.updatedAt);
+            let values: Record<string, unknown> = {};
+            try {
+              const parsed = JSON.parse(row.variablesJson) as unknown;
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                values = parsed as Record<string, unknown>;
+              }
+            } catch {
+              values = {};
+            }
+            Object.entries(values).forEach(([name, value], index) => {
+              insertVariable.run(
+                createId(),
+                row.id,
+                name,
+                typeof value === "string" ? value : JSON.stringify(value),
+                index,
+                row.createdAt,
+                row.updatedAt,
+              );
+            });
+          }
+          raw.exec("DROP TABLE environments");
+        });
+        migrate();
+      }
+
+      const requestColumnsAfterMigration = raw.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>;
+      if (requestColumnsAfterMigration.some((column) => column.name === "variableCollectionId")) {
+        raw.exec(`
+          UPDATE collections
+          SET variableCollectionId = (
+            SELECT variableCollectionId
+            FROM requests
+            WHERE requests.collectionId = collections.id
+              AND requests.variableCollectionId IS NOT NULL
+              AND requests.variableCollectionId != ''
+            ORDER BY requests.createdAt ASC
+            LIMIT 1
+          )
+          WHERE variableCollectionId IS NULL;
+        `);
+        raw.exec("ALTER TABLE requests DROP COLUMN variableCollectionId");
+      }
     },
   };
 }
@@ -144,7 +230,11 @@ function rowToRequest(row: any): RequestRow {
   return row;
 }
 
-function rowToEnvironment(row: any): EnvironmentRow {
+function rowToVariableCollection(row: any): VariableCollectionRow {
+  return row;
+}
+
+function rowToVariable(row: any): VariableRow {
   return row;
 }
 
@@ -168,14 +258,25 @@ export function listCollections(db: Database.Database) {
   return db.prepare("SELECT * FROM collections ORDER BY sortOrder ASC, createdAt DESC").all().map(rowToCollection);
 }
 
-export function upsertCollection(db: Database.Database, input: Partial<CollectionRow> & { name: string; description?: string | null; id?: string }) {
+export function upsertCollection(
+  db: Database.Database,
+  input: Partial<CollectionRow> & {
+    name: string;
+    description?: string | null;
+    variableCollectionId?: string | null;
+    id?: string;
+  },
+) {
   const id = input.id ?? createId();
   const timestamp = nowIso();
-  const existing = db.prepare("SELECT id FROM collections WHERE id = ?").get(id);
+  const existing = getCollection(db, id);
   if (existing) {
-    db.prepare("UPDATE collections SET name = ?, description = ?, updatedAt = ? WHERE id = ?").run(
+    db.prepare("UPDATE collections SET name = ?, description = ?, variableCollectionId = ?, updatedAt = ? WHERE id = ?").run(
       input.name,
       input.description ?? null,
+      input.variableCollectionId !== undefined
+        ? input.variableCollectionId
+        : existing.variableCollectionId,
       timestamp,
       id,
     );
@@ -183,10 +284,11 @@ export function upsertCollection(db: Database.Database, input: Partial<Collectio
     const nextSortOrder =
       input.sortOrder ??
       (db.prepare("SELECT COALESCE(MAX(sortOrder), -1) + 1 AS next FROM collections").get() as { next: number }).next;
-    db.prepare("INSERT INTO collections (id, name, description, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO collections (id, name, description, variableCollectionId, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
       id,
       input.name,
       input.description ?? null,
+      input.variableCollectionId ?? null,
       nextSortOrder,
       timestamp,
       timestamp,
@@ -236,12 +338,13 @@ export function duplicateCollection(db: Database.Database, id: string) {
 
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO collections (id, name, description, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO collections (id, name, description, variableCollectionId, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       duplicateId,
       duplicateName,
       source.description,
+      source.variableCollectionId,
       timestamp,
       timestamp,
     );
@@ -255,7 +358,6 @@ export function duplicateCollection(db: Database.Database, id: string) {
         qos: request.qos,
         retain: request.retain,
         brokerProfileId: request.brokerProfileId,
-        environmentId: request.environmentId,
         sortOrder: request.sortOrder,
       });
     }
@@ -289,7 +391,6 @@ export function upsertRequest(
     qos?: number;
     retain?: boolean | number;
     brokerProfileId?: string | null;
-    environmentId?: string | null;
     sortOrder?: number;
   },
 ) {
@@ -299,7 +400,7 @@ export function upsertRequest(
   const existing = db.prepare("SELECT id FROM requests WHERE id = ?").get(id);
   if (existing) {
     db.prepare(
-      `UPDATE requests SET collectionId = ?, name = ?, topic = ?, payloadTemplate = ?, qos = ?, retain = ?, brokerProfileId = ?, environmentId = ?, updatedAt = ? WHERE id = ?`,
+      `UPDATE requests SET collectionId = ?, name = ?, topic = ?, payloadTemplate = ?, qos = ?, retain = ?, brokerProfileId = ?, updatedAt = ? WHERE id = ?`,
     ).run(
       input.collectionId,
       input.name,
@@ -308,14 +409,13 @@ export function upsertRequest(
       input.qos ?? 0,
       retain,
       input.brokerProfileId ?? null,
-      input.environmentId ?? null,
       timestamp,
       id,
     );
   } else {
     db.prepare(
-      `INSERT INTO requests (id, collectionId, name, topic, payloadTemplate, qos, retain, brokerProfileId, environmentId, sortOrder, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO requests (id, collectionId, name, topic, payloadTemplate, qos, retain, brokerProfileId, sortOrder, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.collectionId,
@@ -325,7 +425,6 @@ export function upsertRequest(
       input.qos ?? 0,
       retain,
       input.brokerProfileId ?? null,
-      input.environmentId ?? null,
       input.sortOrder ?? 0,
       timestamp,
       timestamp,
@@ -364,40 +463,127 @@ export function reorderRequests(
   return listRequests(db, collectionId);
 }
 
-export function listEnvironments(db: Database.Database) {
-  return db.prepare("SELECT * FROM environments ORDER BY createdAt DESC").all().map(rowToEnvironment);
+export function listVariableCollections(db: Database.Database) {
+  return db.prepare("SELECT * FROM variable_collections ORDER BY createdAt DESC").all().map(rowToVariableCollection);
 }
 
-export function getEnvironment(db: Database.Database, id: string) {
-  return db.prepare("SELECT * FROM environments WHERE id = ?").get(id) as EnvironmentRow | undefined;
+export function getVariableCollection(db: Database.Database, id: string) {
+  return db.prepare("SELECT * FROM variable_collections WHERE id = ?").get(id) as VariableCollectionRow | undefined;
 }
 
-export function upsertEnvironment(db: Database.Database, input: Partial<EnvironmentRow> & { name: string; variablesJson?: string; id?: string }) {
+export function upsertVariableCollection(
+  db: Database.Database,
+  input: Partial<VariableCollectionRow> & { name: string; id?: string },
+) {
   const id = input.id ?? createId();
   const timestamp = nowIso();
-  const variablesJson = input.variablesJson ?? "{}";
-  const existing = db.prepare("SELECT id FROM environments WHERE id = ?").get(id);
+  const name = input.name.trim();
+  if (!name) throw new Error("Variable Collection name is required.");
+  const duplicate = db
+    .prepare("SELECT id FROM variable_collections WHERE lower(name) = lower(?) AND id != ?")
+    .get(name, id);
+  if (duplicate) throw new Error(`Variable Collection "${name}" already exists.`);
+  const existing = db.prepare("SELECT id FROM variable_collections WHERE id = ?").get(id);
   if (existing) {
-    db.prepare("UPDATE environments SET name = ?, variablesJson = ?, updatedAt = ? WHERE id = ?").run(
-      input.name,
-      variablesJson,
+    db.prepare("UPDATE variable_collections SET name = ?, updatedAt = ? WHERE id = ?").run(
+      name,
       timestamp,
       id,
     );
   } else {
-    db.prepare("INSERT INTO environments (id, name, variablesJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO variable_collections (id, name, createdAt, updatedAt) VALUES (?, ?, ?, ?)").run(
       id,
-      input.name,
-      variablesJson,
+      name,
       timestamp,
       timestamp,
     );
   }
-  return getEnvironment(db, id);
+  return getVariableCollection(db, id);
 }
 
-export function deleteEnvironment(db: Database.Database, id: string) {
-  db.prepare("DELETE FROM environments WHERE id = ?").run(id);
+export function deleteVariableCollection(db: Database.Database, id: string) {
+  db.prepare("DELETE FROM variable_collections WHERE id = ?").run(id);
+}
+
+export function listVariables(db: Database.Database, variableCollectionId?: string) {
+  if (variableCollectionId) {
+    return db
+      .prepare("SELECT * FROM variables WHERE variableCollectionId = ? ORDER BY sortOrder ASC, createdAt ASC")
+      .all(variableCollectionId)
+      .map(rowToVariable);
+  }
+  return db.prepare("SELECT * FROM variables ORDER BY sortOrder ASC, createdAt ASC").all().map(rowToVariable);
+}
+
+export function getVariable(db: Database.Database, id: string) {
+  return db.prepare("SELECT * FROM variables WHERE id = ?").get(id) as VariableRow | undefined;
+}
+
+export function upsertVariable(
+  db: Database.Database,
+  input: Partial<VariableRow> & {
+    variableCollectionId: string;
+    name: string;
+    value?: string;
+    id?: string;
+  },
+) {
+  const id = input.id ?? createId();
+  const timestamp = nowIso();
+  const existing = db.prepare("SELECT * FROM variables WHERE id = ?").get(id) as VariableRow | undefined;
+  const duplicate = db
+    .prepare("SELECT id FROM variables WHERE variableCollectionId = ? AND name = ? AND id != ?")
+    .get(input.variableCollectionId, input.name, id);
+  if (duplicate) throw new Error(`Variable "${input.name}" already exists in this collection.`);
+  if (existing) {
+    db.prepare(
+      "UPDATE variables SET variableCollectionId = ?, name = ?, value = ?, updatedAt = ? WHERE id = ?",
+    ).run(
+      input.variableCollectionId,
+      input.name,
+      input.value ?? "",
+      timestamp,
+      id,
+    );
+  } else {
+    const nextSortOrder = input.sortOrder ??
+      (db
+        .prepare("SELECT COALESCE(MAX(sortOrder), -1) + 1 AS next FROM variables WHERE variableCollectionId = ?")
+        .get(input.variableCollectionId) as { next: number }).next;
+    db.prepare(
+      "INSERT INTO variables (id, variableCollectionId, name, value, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      id,
+      input.variableCollectionId,
+      input.name,
+      input.value ?? "",
+      nextSortOrder,
+      timestamp,
+      timestamp,
+    );
+  }
+  return getVariable(db, id);
+}
+
+export function deleteVariable(db: Database.Database, id: string) {
+  db.prepare("DELETE FROM variables WHERE id = ?").run(id);
+}
+
+export function reorderVariables(
+  db: Database.Database,
+  variableCollectionId: string,
+  variableIds: string[],
+) {
+  const variables = listVariables(db, variableCollectionId);
+  const ids = new Set(variables.map((variable) => variable.id));
+  if (variableIds.length !== variables.length || variableIds.some((id) => !ids.has(id))) {
+    throw new Error("Variable order does not match the collection.");
+  }
+  db.transaction(() => {
+    const update = db.prepare("UPDATE variables SET sortOrder = ?, updatedAt = ? WHERE id = ? AND variableCollectionId = ?");
+    variableIds.forEach((id, index) => update.run(index, nowIso(), id, variableCollectionId));
+  })();
+  return listVariables(db, variableCollectionId);
 }
 
 export function listBrokerProfiles(db: Database.Database) {
@@ -631,7 +817,8 @@ export function bootstrapState(db: Database.Database) {
   return {
     collections: listCollections(db),
     requests: listRequests(db),
-    environments: listEnvironments(db),
+    variableCollections: listVariableCollections(db),
+    variables: listVariables(db),
     brokers: listBrokerProfiles(db),
     helpers: listHelpers(db),
     consumerSessions: listConsumerSessions(db),

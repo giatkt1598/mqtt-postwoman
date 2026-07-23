@@ -1,4 +1,4 @@
-import { getEnvironment, AppDatabase } from "./db";
+import { getVariableCollection, listVariables, AppDatabase } from "./db";
 import { createTemplateHelperMap, resolveCustomHelper } from "./template/custom-helpers";
 import { resolveBuiltinFunction } from "./template/functions";
 import { ResolvedTemplate, TemplateContext } from "./template/types";
@@ -7,9 +7,9 @@ import { safeJsonParse } from "./utils";
 export type { ResolvedTemplate, TemplateContext } from "./template/types";
 
 function resolveHelper(name: string, context: TemplateContext) {
-  if (name.startsWith("env.")) {
+  if (name.startsWith("var.")) {
     const key = name.slice(4);
-    return context.environment?.[key] ?? context.variables?.[key] ?? "";
+    return context.variableCollection?.[key] ?? context.variables?.[key] ?? "";
   }
   const builtin = resolveBuiltinFunction(name, context);
   if (builtin.matched) return builtin.value;
@@ -53,15 +53,21 @@ function resolveDeep(value: unknown, context: TemplateContext): unknown {
 export function resolveTemplatePayload(
   db: AppDatabase,
   template: string,
-  environmentId?: string | null,
+  variableCollectionId?: string | null,
   variables?: Record<string, unknown>,
   sequenceOffset = 0,
 ) {
-  const environmentRow = environmentId ? getEnvironment(db.raw, environmentId) : undefined;
-  const environment = environmentRow ? (safeJsonParse(environmentRow.variablesJson) as Record<string, unknown> | null) ?? {} : {};
+  const variableCollectionRow = variableCollectionId
+    ? getVariableCollection(db.raw, variableCollectionId)
+    : undefined;
+  const variableCollection = variableCollectionRow
+    ? Object.fromEntries(
+        listVariables(db.raw, variableCollectionRow.id).map((variable) => [variable.name, variable.value]),
+      )
+    : {};
   const helpers = createTemplateHelperMap(db);
   const context: TemplateContext = {
-    environment,
+    variableCollection,
     variables,
     helpers,
     sequenceOffset,

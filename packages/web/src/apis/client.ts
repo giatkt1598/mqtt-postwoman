@@ -3,10 +3,11 @@ import {
   BrokerProfileRow,
   CollectionRow,
   ConsumerSessionRow,
-  EnvironmentRow,
   MessageLogRow,
   RequestRow,
   TemplateHelperRow,
+  VariableCollectionRow,
+  VariableRow,
 } from "../models";
 
 const API_BASE_URL =
@@ -78,18 +79,35 @@ export const apiClient = {
         body: JSON.stringify({ requestIds }),
       }),
   },
-  environments: {
-    create: (payload: Partial<EnvironmentRow> & { name: string; variablesJson: string }) =>
-      request<EnvironmentRow>("/environments", {
+  variableCollections: {
+    create: (payload: Partial<VariableCollectionRow> & { name: string }) =>
+      request<VariableCollectionRow>("/variable-collections", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: Partial<EnvironmentRow> & { name: string; variablesJson: string }) =>
-      request<EnvironmentRow>(`/environments/${id}`, {
+    update: (id: string, payload: Partial<VariableCollectionRow> & { name: string }) =>
+      request<VariableCollectionRow>(`/variable-collections/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       }),
-    remove: (id: string) => request<void>(`/environments/${id}`, { method: "DELETE" }),
+    remove: (id: string) => request<void>(`/variable-collections/${id}`, { method: "DELETE" }),
+    variables: (id: string) => request<VariableRow[]>(`/variable-collections/${id}/variables`),
+    createVariable: (id: string, payload: Partial<VariableRow> & { name: string; value: string }) =>
+      request<VariableRow>(`/variable-collections/${id}/variables`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    updateVariable: (id: string, payload: Partial<VariableRow> & { name: string; value: string }) =>
+      request<VariableRow>(`/variables/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }),
+    removeVariable: (id: string) => request<void>(`/variables/${id}`, { method: "DELETE" }),
+    reorderVariables: (id: string, variableIds: string[]) =>
+      request<VariableRow[]>(`/variable-collections/${id}/variables/order`, {
+        method: "PUT",
+        body: JSON.stringify({ variableIds }),
+      }),
   },
   brokers: {
     statuses: () =>

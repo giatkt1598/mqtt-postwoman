@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import { useWorkspaceContext } from "../contexts";
 
-export type WorkspaceTab = "publishers" | "consumers" | "connections";
+export type WorkspaceTab =
+  | "publishers"
+  | "consumers"
+  | "variables"
+  | "connections";
 
 interface ConnectionSummary {
   name: string;
@@ -49,9 +53,7 @@ export function WorkspaceHeader(): ReactNode {
                     : "status-dot disconnected"
                 }
               />
-              {activeConnectionStatus?.connected
-                ? "Connected"
-                : "Disconnected"}
+              {activeConnectionStatus?.connected ? "Connected" : "Disconnected"}
             </span>
           ) : (
             <span className="connection-status-pill no-connection">
@@ -76,6 +78,12 @@ export function WorkspaceHeader(): ReactNode {
                 {unreadConsumerMessages > 99 ? "99+" : unreadConsumerMessages}
               </span>
             )}
+          </button>
+          <button
+            className={mainTab === "variables" ? "active" : ""}
+            onClick={() => onTabChange("variables")}
+          >
+            Variables
           </button>
           <button
             className={mainTab === "connections" ? "active" : ""}

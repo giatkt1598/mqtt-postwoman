@@ -39,7 +39,7 @@ const helperKindResolvers: Record<HelperKind, CustomHelperResolver> = {
   },
   env: (config, context) => {
     const key = String(config.key ?? "");
-    return context.environment?.[key] ?? context.variables?.[key] ?? "";
+    return context.variableCollection?.[key] ?? context.variables?.[key] ?? "";
   },
 };
 
