@@ -5,6 +5,7 @@ import "react-toastify/dist/ReactToastify.css";
 import { apiClient as client, createRealtimeSocket } from "./apis";
 import {
   CollectionSidebar,
+  PayloadEditor,
   TopicAutocomplete,
   WorkspaceHeader,
 } from "./components";
@@ -457,6 +458,17 @@ export default function App() {
   const selectedCollection = collections.find(
     (collection) => collection.id === selectedCollectionId,
   );
+  const payloadEditorLanguage =
+    payloadFormat === "raw" ? "plaintext" : payloadFormat;
+  const payloadEditorVariables = selectedCollection?.variableCollectionId
+    ? variables
+        .filter(
+          (variable) =>
+            variable.variableCollectionId ===
+            selectedCollection.variableCollectionId,
+        )
+        .map((variable) => ({ name: variable.name, value: variable.value }))
+    : [];
 
   const updateCollectionVariables = async (variableCollectionId: string) => {
     if (!selectedCollection) return;
@@ -1751,13 +1763,12 @@ export default function App() {
                 </div>
               </div>
 
-              <textarea
-                className="payload-editor"
-                rows={15}
+              <PayloadEditor
                 value={draft.payloadTemplate}
-                spellCheck={false}
-                onChange={(event) =>
-                  setDraft({ ...draft, payloadTemplate: event.target.value })
+                language={payloadEditorLanguage}
+                variables={payloadEditorVariables}
+                onChange={(payloadTemplate) =>
+                  setDraft({ ...draft, payloadTemplate })
                 }
               />
 

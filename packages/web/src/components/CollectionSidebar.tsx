@@ -102,7 +102,7 @@ export function CollectionSidebar() {
             +
           </button>
         </div>
-        <div className="collection-list">
+        <div className="collection-list mt-2">
           {collections.map((collection) => {
             const collectionRequests = requests.filter(
               (request) => request.collectionId === collection.id,

@@ -227,6 +227,10 @@ label {
   gap: 0.65rem;
 }
 
+.session-list {
+  gap: 0rem;
+}
+
 .collection-item,
 .request-item,
 .mini-row,
@@ -1168,10 +1172,24 @@ h1 {
   overflow: hidden;
 }
 
-.editor-card:not(.request-editor-empty) > .payload-editor {
+.editor-card:not(.request-editor-empty) > .payload-editor-shell {
   flex: 1 1 auto;
-  min-height: 0;
-  resize: none;
+  min-height: 330px;
+}
+
+.payload-editor-shell {
+  width: 100%;
+  min-height: 330px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border: 1px solid rgba(155, 180, 255, 0.08);
+  border-radius: 6px;
+  background: #171b24;
+}
+
+.payload-editor-shell .template-token {
+  color: #f6c85f !important;
+  font-weight: 600;
 }
 
 .inspector-card > .tab-row {
@@ -1488,26 +1506,6 @@ h1 {
   border-color: transparent;
   color: white;
   box-shadow: 0 4px 14px rgba(79, 209, 197, 0.18);
-}
-
-.payload-editor {
-  width: 100%;
-  min-height: 330px;
-  margin: 0;
-  padding: 0.9rem 1rem;
-  resize: vertical;
-  border-radius: 0;
-  border: 1px solid rgba(155, 180, 255, 0.08);
-  border-left: 2.2rem solid rgba(255, 255, 255, 0.06);
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.03) 0 2.2rem,
-    rgba(4, 8, 18, 0.72) 2.2rem
-  );
-  color: #e9eefc;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.86rem;
-  line-height: 1.55;
 }
 
 .request-controls {

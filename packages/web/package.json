@@ -8,7 +8,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "fflate": "^0.8.3",
+    "monaco-editor": "^0.56.0",
     "react": "^19.2.2",
     "react-dom": "^19.2.2",
     "react-toastify": "^11.1.0"
