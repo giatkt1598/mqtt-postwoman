@@ -291,7 +291,7 @@ export function ConnectionsPage(): ReactNode {
             </div>
             <div className="connection-advanced-row">
               <label>
-                Keep alive
+                Keep alive (in seconds)
                 <input
                   type="number"
                   value={brokerDraft.keepAlive}
@@ -304,7 +304,7 @@ export function ConnectionsPage(): ReactNode {
                 />
               </label>
               <label>
-                Reconnect period
+                Reconnect period (in milliseconds)
                 <input
                   type="number"
                   value={brokerDraft.reconnectPeriod}
