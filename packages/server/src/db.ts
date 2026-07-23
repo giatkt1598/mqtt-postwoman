@@ -14,6 +14,10 @@ import {
 } from "./types";
 import { createId, nowIso } from "./utils";
 
+/**
+ * Compatibility facade for the pre-TypeORM test/runtime boundary.
+ * New HTTP persistence uses AppRepositories and TypeORM migrations.
+ */
 export interface AppDatabase {
   raw: Database.Database;
   init(): void;

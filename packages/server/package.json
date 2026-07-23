@@ -6,7 +6,11 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "test": "tsx --test test/**/*.test.ts"
+    "test": "tsx --test test/**/*.test.ts",
+    "migration:run": "tsx src/database/cli.ts run",
+    "migration:revert": "tsx src/database/cli.ts revert",
+    "migration:show": "tsx src/database/cli.ts show",
+    "migration:generate": "typeorm-ts-node-commonjs migration:generate src/database/migrations/Next -d src/database/data-source.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
@@ -17,6 +21,10 @@
     "helmet": "^8.1.0",
     "morgan": "^1.10.1",
     "mqtt": "^5.14.1",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.27",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.31",
     "ws": "^8.18.3",
     "zod": "^4.2.0"
   },
