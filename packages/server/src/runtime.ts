@@ -8,7 +8,7 @@ import {
   listConsumerSessions,
   updateConsumerSession,
 } from "./db";
-import { topicMatches } from "./topic";
+import { topicMatches, validatePublishTopic } from "./topic";
 import { createId, nowIso, safeJsonParse } from "./utils";
 import { ResolvedTemplate } from "./template";
 
@@ -301,6 +301,7 @@ export class RuntimeManager {
     requestId?: string | null,
     variables?: Record<string, unknown>,
   ) {
+    validatePublishTopic(topic);
     await this.ensureBroker(profileId);
     const broker = this.brokers.get(profileId);
     if (!broker) throw new Error("Broker connection unavailable");

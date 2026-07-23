@@ -179,10 +179,12 @@ function mergeLogs(current: MessageLogRow[], incoming: MessageLogRow[]) {
 function TopicAutocomplete({
   value,
   topics,
+  label,
   onChange,
 }: {
   value: string;
   topics: string[];
+  label: string;
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -209,8 +211,13 @@ function TopicAutocomplete({
   };
 
   return (
-    <div className="topic-autocomplete" ref={rootRef}>
+    <div
+      className={`topic-autocomplete ${value.trim() ? "has-value" : ""}`}
+      ref={rootRef}
+    >
+      <span className="topic-floating-label">{label}</span>
       <input
+        aria-label={label}
         value={value}
         onFocus={() => setOpen(true)}
         onChange={(event) => {
@@ -815,20 +822,31 @@ export default function App() {
   };
 
   const publishRequest = async () => {
+    const trimmedTopic = draft.topic.trim();
     const hasConnectedBroker = Boolean(
       activeConnectionId &&
       brokerStatuses.some(
         (status) => status.profileId === activeConnectionId && status.connected,
       ),
     );
-    const hasTopic = Boolean(draft.topic.trim());
-    setTopicValidationError(!hasTopic);
-    if (!hasConnectedBroker) {
-      toast.error("Connect to a broker before publishing.");
-      return;
-    }
+    const hasTopic = Boolean(trimmedTopic);
+    const hasNullCharacter = draft.topic.includes("\u0000");
+    const hasPublishWildcard = draft.topic.includes("+") || draft.topic.includes("#");
+    setTopicValidationError(!hasTopic || hasNullCharacter || hasPublishWildcard);
     if (!hasTopic) {
       toast.error("Enter a topic before publishing.");
+      return;
+    }
+    if (hasNullCharacter) {
+      toast.error("Publish topic must not contain the NULL character.");
+      return;
+    }
+    if (hasPublishWildcard) {
+      toast.error("Publish topic must not contain MQTT wildcards (+ or #).");
+      return;
+    }
+    if (!hasConnectedBroker) {
+      toast.error("Connect to a broker before publishing.");
       return;
     }
     await client.batchPublish({
@@ -1467,9 +1485,9 @@ export default function App() {
               <div
                 className={`request-topic-row ${topicValidationError ? "topic-invalid" : ""}`}
               >
-                <label className="topic-field">
-                  Topic
+                <div className="topic-field">
                   <TopicAutocomplete
+                    label="Topic"
                     value={draft.topic}
                     topics={allTopics}
                     onChange={(topic) => {
@@ -1477,7 +1495,7 @@ export default function App() {
                       setDraft({ ...draft, topic });
                     }}
                   />
-                </label>
+                </div>
                 <button
                   className="topic-clear"
                   aria-label="Clear topic"
@@ -1635,6 +1653,7 @@ export default function App() {
                       Topics comma separated
                       <div className="topic-input-with-color">
                         <TopicAutocomplete
+                          label="Topics comma separated"
                           value={consumerTopics}
                           topics={allTopics}
                           onChange={setConsumerTopics}
@@ -2252,30 +2271,28 @@ export default function App() {
                       Subscribe
                     </button>
                   </div>
-                  <label>
-                    Topics comma separated
-                    <div className="topic-input-with-color">
-                      <TopicAutocomplete
-                        value={consumerTopics}
-                        topics={allTopics}
-                        onChange={setConsumerTopics}
-                      />
-                      <input
-                        className="topic-color-picker"
-                        type="color"
-                        value={consumerTopicColor}
-                        aria-label="Choose topic color"
-                        title="Choose topic color"
-                        onChange={(event) => {
-                          setConsumerTopicColor(event.target.value);
-                          localStorage.setItem(
-                            "mqtt-postwoman.consumerTopicColor",
-                            event.target.value,
-                          );
-                        }}
-                      />
-                    </div>
-                  </label>
+                  <div className="topic-input-with-color">
+                    <TopicAutocomplete
+                      label="Topics comma separated"
+                      value={consumerTopics}
+                      topics={allTopics}
+                      onChange={setConsumerTopics}
+                    />
+                    <input
+                      className="topic-color-picker"
+                      type="color"
+                      value={consumerTopicColor}
+                      aria-label="Choose topic color"
+                      title="Choose topic color"
+                      onChange={(event) => {
+                        setConsumerTopicColor(event.target.value);
+                        localStorage.setItem(
+                          "mqtt-postwoman.consumerTopicColor",
+                          event.target.value,
+                        );
+                      }}
+                    />
+                  </div>
                   <label>
                     QoS
                     <select

@@ -1018,8 +1018,32 @@ h1 {
   flex: 1;
 }
 
-.topic-field input {
-  margin-top: 0.2rem;
+.topic-autocomplete {
+  position: relative;
+  min-width: 0;
+  padding-top: 0.65rem;
+}
+
+.topic-floating-label {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transform-origin: left top;
+  transition:
+    top 160ms ease,
+    color 160ms ease,
+    font-size 160ms ease,
+    transform 160ms ease;
+}
+
+.topic-autocomplete input {
+  width: 100%;
+  margin: 0;
   padding: 0.35rem 0;
   border: 0;
   border-radius: 0;
@@ -1028,7 +1052,15 @@ h1 {
   font-size: 1rem;
 }
 
-.topic-field input:focus {
+.topic-autocomplete:focus-within .topic-floating-label,
+.topic-autocomplete.has-value .topic-floating-label {
+  top: 0;
+  color: var(--accent);
+  font-size: 0.7rem;
+  transform: translateY(0);
+}
+
+.topic-autocomplete input:focus {
   border-color: transparent;
   box-shadow: none;
 }
@@ -1036,11 +1068,6 @@ h1 {
 .request-topic-row.topic-invalid {
   border-bottom: 3px solid rgba(255, 107, 107, 0.95);
   box-shadow: 0 3px 0 rgba(255, 107, 107, 0.2);
-}
-
-.topic-autocomplete {
-  position: relative;
-  min-width: 0;
 }
 
 .topic-autocomplete input {
@@ -1120,6 +1147,11 @@ h1 {
 
 .topic-input-with-color .topic-autocomplete {
   flex: 1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.topic-input-with-color .topic-autocomplete:focus-within {
+  border-bottom-color: var(--accent);
 }
 
 .topic-color-picker {
@@ -1369,6 +1401,10 @@ pre {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.message-row {
+  border-left-width: thick;
 }
 
 .session-row,

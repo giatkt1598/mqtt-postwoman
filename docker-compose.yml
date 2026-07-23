@@ -18,6 +18,8 @@ services:
     image: eclipse-mosquitto:2
     ports:
       - "1883:1883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
 
@@ -25,16 +27,22 @@ services:
     image: eclipse-mosquitto:2
     ports:
       - "1884:1883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   mosquitto-3:
     image: eclipse-mosquitto:2
     ports:
       - "1885:1883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   mosquitto-4:
     image: eclipse-mosquitto:2
     ports:
       - "1886:8883"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/mosquitto-tls.conf:/mosquitto/config/mosquitto.conf:ro
       - ./docker/certs:/mosquitto/certs:ro

@@ -1,3 +1,17 @@
+export function validatePublishTopic(topic: string) {
+  if (!topic.trim()) {
+    throw new Error("Publish topic is required.");
+  }
+
+  if (topic.includes("\u0000")) {
+    throw new Error("Publish topic must not contain the NULL character.");
+  }
+
+  if (topic.includes("+") || topic.includes("#")) {
+    throw new Error("Publish topic must not contain MQTT wildcards (+ or #).");
+  }
+}
+
 export function topicMatches(filter: string, topic: string) {
   const filterParts = filter.split("/");
   const topicParts = topic.split("/");
@@ -23,4 +37,3 @@ export function topicMatches(filter: string, topic: string) {
 
   return i === topicParts.length;
 }
-
