@@ -1178,6 +1178,7 @@ h1 {
 }
 
 .payload-editor-shell {
+  position: relative;
   width: 100%;
   min-height: 330px;
   flex: 1 1 auto;
@@ -1440,12 +1441,12 @@ h1 {
   background: transparent;
   color: #69c8ff;
   font-size: 0.78rem;
-  text-decoration: underline;
 }
 
 .beautify-link:hover {
   border-color: transparent;
   color: #a9e2ff;
+  text-decoration: underline;
 }
 
 .topic-input-with-color {

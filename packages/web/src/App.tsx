@@ -1727,34 +1727,6 @@ export default function App() {
                       {format}
                     </button>
                   ))}
-                  {payloadFormat !== "raw" && (
-                    <button
-                      className="beautify-link"
-                      onClick={() => {
-                        if (payloadFormat === "json") {
-                          try {
-                            setDraft({
-                              ...draft,
-                              payloadTemplate: JSON.stringify(
-                                JSON.parse(draft.payloadTemplate),
-                                null,
-                                2,
-                              ),
-                            });
-                          } catch {
-                            toast.error("Payload is not valid JSON.");
-                          }
-                        } else {
-                          setDraft({
-                            ...draft,
-                            payloadTemplate: beautifyXml(draft.payloadTemplate),
-                          });
-                        }
-                      }}
-                    >
-                      Beautify
-                    </button>
-                  )}
                 </div>
                 <div className="request-send-actions">
                   <button onClick={publishRequest} className="publish-button">
@@ -1773,6 +1745,36 @@ export default function App() {
               />
 
               <div className="request-controls">
+                {payloadFormat !== "raw" && (
+                  <button
+                    type="button"
+                    className="beautify-link"
+                    onClick={() => {
+                      if (payloadFormat === "json") {
+                        try {
+                          setDraft({
+                            ...draft,
+                            payloadTemplate: JSON.stringify(
+                              JSON.parse(draft.payloadTemplate),
+                              null,
+                              2,
+                            ),
+                          });
+                        } catch {
+                          toast.error("Payload is not valid JSON.");
+                        }
+                      } else {
+                        setDraft({
+                          ...draft,
+                          payloadTemplate: beautifyXml(draft.payloadTemplate),
+                        });
+                      }
+                    }}
+                  >
+                    Beautify
+                  </button>
+                )}
+                <div className="flex-1" />
                 <label>
                   Batch
                   <input
