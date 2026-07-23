@@ -1780,13 +1780,13 @@ export default function App() {
                   <input
                     type="number"
                     min={1}
-                    max={1000}
+                    max={1000000}
                     step={1}
                     value={batchCount}
                     onChange={(event) =>
                       setBatchCount(
                         Math.min(
-                          1000,
+                          1000000,
                           Math.max(1, Number(event.target.value) || 1),
                         ),
                       )

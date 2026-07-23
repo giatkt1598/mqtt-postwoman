@@ -10,7 +10,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - app-data:/data
+      - ./docker/data/app:/data
     depends_on:
       - mosquitto
 
@@ -22,6 +22,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/data/mosquitto:/mosquitto/data
 
   mosquitto-2:
     image: eclipse-mosquitto:2
@@ -29,23 +30,17 @@ services:
       - "1884:1883"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docker/data/mosquitto-2:/mosquitto/data
 
   mosquitto-3:
     image: eclipse-mosquitto:2
     ports:
-      - "1885:1883"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  mosquitto-4:
-    image: eclipse-mosquitto:2
-    ports:
-      - "1886:8883"
+      - "1885:8883"
+      - "8085:8083"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/mosquitto-tls.conf:/mosquitto/config/mosquitto.conf:ro
       - ./docker/certs:/mosquitto/certs:ro
-
-volumes:
-  app-data:
+      - ./docker/data/mosquitto-3:/mosquitto/data

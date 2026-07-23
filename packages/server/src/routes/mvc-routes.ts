@@ -16,7 +16,7 @@ const consumerSchema = z.object({ name: z.string().min(1), brokerProfileId: z.st
 const helperSchema = z.object({ id: z.string().optional(), name: z.string().min(1), kind: z.enum(["literal", "now", "uuid", "randomInt", "env"]), configJson: z.string().default("{}") });
 const templateSchema = z.object({ template: z.string(), variableCollectionId: z.string().nullable().optional(), variables: z.record(z.string(), z.unknown()).default({}) });
 const publishSchema = z.object({ requestId: z.string().optional(), brokerProfileId: z.string().optional(), topic: z.string().optional(), payloadTemplate: z.string().optional(), qos: z.number().int().min(0).max(2).default(0), retain: z.boolean().default(false), variableCollectionId: z.string().nullable().optional(), variables: z.record(z.string(), z.unknown()).default({}) });
-const batchSchema = publishSchema.extend({ count: z.number().int().min(1).max(1000).default(10), delayMs: z.number().int().min(0).max(60000).default(0), items: z.array(z.object({ topic: z.string().optional(), payloadTemplate: z.string().optional(), variables: z.record(z.string(), z.unknown()).optional() })).optional() });
+const batchSchema = publishSchema.extend({ count: z.number().int().min(1).max(1000000).default(10), delayMs: z.number().int().min(0).max(60000).default(0), items: z.array(z.object({ topic: z.string().optional(), payloadTemplate: z.string().optional(), variables: z.record(z.string(), z.unknown()).optional() })).optional() });
 
 export function buildMvcRouter(dataSource: DataSource, runtime: RuntimeService) {
   const router = Router();
