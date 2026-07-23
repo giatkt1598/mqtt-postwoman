@@ -435,8 +435,13 @@ label {
 }
 
 .request-more-button {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 0.25rem;
   opacity: 0;
   background: transparent;
+  transform: translateY(-50%);
 }
 
 .request-tree-row:hover .request-more-button,
@@ -645,6 +650,10 @@ h1 {
   align-items: stretch;
 }
 
+.editor-grid.full-width-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .request-tab-strip {
   display: flex;
   gap: 0.35rem;
@@ -773,6 +782,10 @@ h1 {
 .connection-manager,
 .connections-form {
   padding: 1rem;
+}
+
+.full-width-page .connections-form {
+  max-width: none;
 }
 
 .connections-form {

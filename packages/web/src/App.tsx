@@ -1,8 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { client } from "./api";
-import { createRealtimeSocket } from "./api";
+import { apiClient as client, createRealtimeSocket } from "./apis";
+import {
+  CollectionSidebar,
+  TopicAutocomplete,
+  WorkspaceHeader,
+} from "./components";
+import {
+  ConnectionsPage,
+  ConsumersPage,
+  PublishersPage,
+} from "./pages";
+import {
+  beautifyXml,
+  emptyBrokerDraft,
+  emptyDraft,
+  formatTime,
+  isRequestModified,
+  joinTopics,
+  mergeLogs,
+  parseJsonObject,
+  randomTopicColor,
+  requestToDraft,
+  toPrettyJson,
+  topicMatches,
+} from "./utilities";
 import {
   BootstrapState,
   BrokerProfileRow,
@@ -14,12 +37,12 @@ import {
   MessageLogRow,
   RequestRow,
   TemplateHelperRow,
-} from "./types";
+} from "./models";
+import { useWorkspaceNavigation } from "./hooks";
+import { WorkspaceProvider, type WorkspaceContextValue } from "./contexts";
 
 type AssetTab = "environments" | "brokers" | "helpers";
 type RightTab = "history" | "functions" | "assets";
-type MainTab = "publishers" | "consumers" | "connections";
-type ConnectionView = "list" | "form";
 type CollectionModal = "create" | "edit" | null;
 type PayloadFormat = "raw" | "xml" | "json";
 type InactiveConsumerTopic = {
@@ -33,217 +56,6 @@ type DeleteConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-const emptyDraft = (
-  collectionId = "",
-  brokerProfileId = "",
-  environmentId = "",
-): DraftRequest => ({
-  collectionId,
-  name: "New request",
-  topic: "",
-  payloadTemplate: '{"publishDate":"{{now}}"}',
-  qos: 0,
-  retain: false,
-  brokerProfileId,
-  environmentId,
-});
-
-function requestToDraft(request: RequestRow): DraftRequest {
-  return {
-    id: request.id,
-    collectionId: request.collectionId,
-    name: request.name,
-    topic: request.topic,
-    payloadTemplate: request.payloadTemplate,
-    qos: request.qos,
-    retain: Boolean(request.retain),
-    brokerProfileId: request.brokerProfileId ?? "",
-    environmentId: request.environmentId ?? "",
-  };
-}
-
-function isRequestModified(
-  request: RequestRow | undefined,
-  draft: DraftRequest | undefined,
-) {
-  if (!request || !draft) return false;
-  return (
-    request.collectionId !== draft.collectionId ||
-    request.name !== draft.name ||
-    request.topic !== draft.topic ||
-    request.payloadTemplate !== draft.payloadTemplate ||
-    request.qos !== draft.qos ||
-    Boolean(request.retain) !== draft.retain ||
-    (request.brokerProfileId ?? "") !== draft.brokerProfileId ||
-    (request.environmentId ?? "") !== draft.environmentId
-  );
-}
-
-const emptyBrokerDraft = () => ({
-  id: "",
-  name: "local-mosquitto",
-  host: "localhost",
-  port: 1883,
-  protocol: "mqtt",
-  validateCertificate: true,
-  encryption: false,
-  username: "",
-  password: "",
-  clientId: "",
-  clean: true,
-  keepAlive: 30,
-  reconnectPeriod: 1000,
-  caCert: "",
-  clientCert: "",
-  clientKey: "",
-});
-
-function parseJsonObject(value: string) {
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function toPrettyJson(value: unknown) {
-  return JSON.stringify(value, null, 2);
-}
-
-function formatTime(value: string) {
-  return new Date(value).toLocaleString();
-}
-
-function joinTopics(value: string) {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function topicMatches(filter: string, topic: string) {
-  const filterParts = filter.split("/");
-  const topicParts = topic.split("/");
-  for (let index = 0; index < filterParts.length; index += 1) {
-    if (filterParts[index] === "#") return true;
-    if (filterParts[index] === "+") {
-      if (!topicParts[index]) return false;
-      continue;
-    }
-    if (filterParts[index] !== topicParts[index]) return false;
-  }
-  return filterParts.length === topicParts.length;
-}
-
-function beautifyXml(value: string) {
-  const normalized = value.replace(/>\s*</g, "><").replace(/></g, ">\n<");
-  let depth = 0;
-  return normalized
-    .split("\n")
-    .map((line) => {
-      if (line.startsWith("</")) depth = Math.max(depth - 1, 0);
-      const formatted = `${"  ".repeat(depth)}${line}`;
-      if (
-        line.startsWith("<") &&
-        !line.startsWith("</") &&
-        !line.endsWith("/>") &&
-        !line.includes("</")
-      )
-        depth += 1;
-      return formatted;
-    })
-    .join("\n");
-}
-
-function randomTopicColor() {
-  return `#${Math.floor(Math.random() * 0xffffff)
-    .toString(16)
-    .padStart(6, "0")}`;
-}
-
-function mergeLogs(current: MessageLogRow[], incoming: MessageLogRow[]) {
-  const byId = new Map(current.map((log) => [log.id, log]));
-  for (const log of incoming) byId.set(log.id, log);
-  return [...byId.values()]
-    .sort(
-      (left, right) =>
-        new Date(right.createdAt).getTime() -
-        new Date(left.createdAt).getTime(),
-    )
-    .slice(0, 200);
-}
-
-function TopicAutocomplete({
-  value,
-  topics,
-  label,
-  onChange,
-}: {
-  value: string;
-  topics: string[];
-  label: string;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const currentPart = value.split(",").pop()?.trim() ?? "";
-  const suggestions = topics.filter((topic) =>
-    topic.toLowerCase().includes(currentPart.toLowerCase()),
-  );
-
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node))
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, []);
-
-  const selectTopic = (topic: string) => {
-    const parts = value.split(",");
-    parts[parts.length - 1] = ` ${topic}`;
-    onChange(parts.join(",").replace(/^\s+/, ""));
-    setOpen(false);
-  };
-
-  return (
-    <div
-      className={`topic-autocomplete ${value.trim() ? "has-value" : ""}`}
-      ref={rootRef}
-    >
-      <span className="topic-floating-label">{label}</span>
-      <input
-        aria-label={label}
-        value={value}
-        onFocus={() => setOpen(true)}
-        onChange={(event) => {
-          onChange(event.target.value);
-          setOpen(true);
-        }}
-      />
-      {open && suggestions.length > 0 && (
-        <div className="topic-suggestion-list" role="listbox">
-          {suggestions.map((topic) => (
-            <button
-              key={topic}
-              type="button"
-              role="option"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => selectTopic(topic)}
-            >
-              {topic}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [brokerStatuses, setBrokerStatuses] = useState<
@@ -254,10 +66,17 @@ export default function App() {
       lastError: string | null;
     }>
   >([]);
-  const [mainTab, setMainTab] = useState<MainTab>("publishers");
-  const mainTabRef = useRef<MainTab>("publishers");
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
-  const [selectedRequestId, setSelectedRequestId] = useState<string>("");
+  const {
+    mainTab,
+    setMainTab,
+    mainTabRef,
+    selectedCollectionId,
+    setSelectedCollectionId,
+    selectedRequestId,
+    setSelectedRequestId,
+    connectionView,
+    setConnectionView,
+  } = useWorkspaceNavigation();
   const [expandedCollectionIds, setExpandedCollectionIds] = useState<string[]>(
     () => {
       try {
@@ -290,7 +109,6 @@ export default function App() {
   const [activeConnectionId, setActiveConnectionId] = useState<string>(
     () => localStorage.getItem("mqtt-postwoman.activeConnectionId") ?? "",
   );
-  const [connectionView, setConnectionView] = useState<ConnectionView>("list");
   const [rightTab, setRightTab] = useState<RightTab>("history");
   const [assetTab, setAssetTab] = useState<AssetTab>("environments");
   const [draft, setDraft] = useState<DraftRequest>(emptyDraft());
@@ -1527,267 +1345,126 @@ export default function App() {
       : envDraft.variablesJson;
   }, [currentEnvValue, envDraft.variablesJson]);
 
-  return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">MP</div>
-          <div>
-            <div className="brand-title">MQTT Postwoman</div>
-            <div className="brand-sub">Local-first MQTT control room</div>
-          </div>
-        </div>
+  const handleCollectionMenuToggle = (collectionId: string, anchor: HTMLElement) => {
+    if (collectionMenuId === collectionId) {
+      closeActionPopover();
+      return;
+    }
+    setRequestMenuId(null);
+    setCollectionMenuId(collectionId);
+    setPopoverPosition(getPopoverPosition(anchor));
+  };
 
-        <div className="sidebar-panel">
-          <div className="panel-header">
-            <span>Collections</span>
-            <button
-              className="icon-button"
-              aria-label="Create collection"
-              title="Create collection"
-              onClick={openCreateCollection}
-            >
-              +
-            </button>
-          </div>
-          <div className="collection-list">
-            {sortedCollections.map((collection) => {
-              const collectionRequests = (bootstrap?.requests ?? []).filter(
-                (request) => request.collectionId === collection.id,
-              );
-              const isExpanded = expandedCollectionIds.includes(collection.id);
-              return (
-                <div key={collection.id} className="collection-node">
-                  <div
-                    className={`collection-item ${collection.id === selectedCollectionId ? "active" : ""} ${collection.id === dragOverCollectionId ? "drag-over" : ""}`}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      if (draggedCollectionId !== collection.id) {
-                        setDragOverCollectionId(collection.id);
-                      }
-                    }}
-                    onDrop={(event) =>
-                      dropRequestOnCollection(collection.id, event)
-                    }
-                  >
-                    <button
-                      className="collection-toggle"
-                      aria-label={
-                        isExpanded ? "Collapse collection" : "Expand collection"
-                      }
-                      title={
-                        isExpanded ? "Collapse collection" : "Expand collection"
-                      }
-                      onClick={() => toggleCollection(collection.id)}
-                    >
-                      {isExpanded ? "⌄" : "›"}
-                    </button>
-                    <button
-                      className="collection-main"
-                      draggable
-                      onDragStart={(event) => {
-                        event.stopPropagation();
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", collection.id);
-                        setDraggedCollectionId(collection.id);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedCollectionId(null);
-                        setDragOverCollectionId(null);
-                      }}
-                      onClick={() => selectCollection(collection)}
-                    >
-                      <span className="collection-label">
-                        <span>{collection.name}</span>
-                        {favoriteCollectionIds.includes(collection.id) && (
-                          <span className="favorite-mark">★</span>
-                        )}
-                      </span>
-                      <small>{collectionRequests.length} requests</small>
-                    </button>
-                    <div className="collection-actions">
-                      <button
-                        className="icon-button"
-                        aria-label="Add request"
-                        title="Add request"
-                        onClick={() => addRequestToCollection(collection)}
-                      >
-                        +
-                      </button>
-                      <button
-                        className={`icon-button ${favoriteCollectionIds.includes(collection.id) ? "is-favorite" : ""}`}
-                        aria-label="Add to favorites"
-                        title="Add to favorites"
-                        onClick={() => toggleFavoriteCollection(collection.id)}
-                      >
-                        ★
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="More collection actions"
-                        title="More collection actions"
-                        onClick={(event) => {
-                          if (collectionMenuId === collection.id) {
-                            closeActionPopover();
-                            return;
-                          }
-                          setRequestMenuId(null);
-                          setCollectionMenuId(collection.id);
-                          setPopoverPosition(
-                            getPopoverPosition(event.currentTarget),
-                          );
-                        }}
-                      >
-                        ⋯
-                      </button>
-                    </div>
-                  </div>
-                  {isExpanded && (
-                    <div className="request-tree">
-                      {collectionRequests.map((request) => (
-                        <div
-                          key={request.id}
-                          className={`request-tree-row ${request.id === selectedRequestId ? "active" : ""}`}
-                        >
-                          <button
-                            className={`request-tree-item ${request.id === selectedRequestId ? "active" : ""} ${request.id === draggedRequestId ? "dragging" : ""} ${request.id === dragOverRequestId ? "drag-over" : ""}`}
-                            draggable
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("text/plain", request.id);
-                              setDraggedRequestId(request.id);
-                            }}
-                            onDragOver={(event) => {
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = "move";
-                              setDragOverRequestId(request.id);
-                            }}
-                            onDrop={(event) =>
-                              dropRequest(collection.id, request.id, event)
-                            }
-                            onDragEnd={() => {
-                              setDraggedRequestId(null);
-                              setDragOverRequestId(null);
-                              setDragOverCollectionId(null);
-                            }}
-                            onClick={() => selectRequest(request)}
-                          >
-                            <span className="request-method">MQTT</span>
-                            {isRequestModified(
-                              request,
-                              requestDrafts[request.id],
-                            ) && (
-                              <span
-                                className="request-modified-dot"
-                                aria-label="Modified"
-                                title="Modified"
-                              />
-                            )}
-                            <span className="request-tree-name">
-                              {request.name}
-                            </span>
-                          </button>
-                          <div className="request-actions">
-                            <button
-                              className="icon-button request-more-button"
-                              aria-label="More request actions"
-                              title="More request actions"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                if (requestMenuId === request.id) {
-                                  closeActionPopover();
-                                  return;
-                                }
-                                setCollectionMenuId(null);
-                                setRequestMenuId(request.id);
-                                setPopoverPosition(
-                                  getPopoverPosition(event.currentTarget),
-                                );
-                              }}
-                            >
-                              ⋯
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      {collectionRequests.length === 0 && (
-                        <small className="request-tree-empty">
-                          No requests yet
-                        </small>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </aside>
+  const handleRequestMenuToggle = (requestId: string, anchor: HTMLElement) => {
+    if (requestMenuId === requestId) {
+      closeActionPopover();
+      return;
+    }
+    setCollectionMenuId(null);
+    setRequestMenuId(requestId);
+    setPopoverPosition(getPopoverPosition(anchor));
+  };
+
+  const handleCollectionDragOver = (collectionId: string) => {
+    if (draggedCollectionId !== collectionId) {
+      setDragOverCollectionId(collectionId);
+    }
+  };
+
+  const workspaceContextValue: WorkspaceContextValue = {
+    collections: sortedCollections,
+    requests: bootstrap?.requests ?? [],
+    selectedCollectionId,
+    selectedRequestId,
+    expandedCollectionIds,
+    favoriteCollectionIds,
+    requestDrafts,
+    draggedRequestId,
+    draggedCollectionId,
+    dragOverRequestId,
+    dragOverCollectionId,
+    onCreateCollection: openCreateCollection,
+    onSelectCollection: selectCollection,
+    onSelectRequest: selectRequest,
+    onToggleCollection: toggleCollection,
+    onAddRequest: addRequestToCollection,
+    onToggleFavorite: toggleFavoriteCollection,
+    onCollectionMenuToggle: handleCollectionMenuToggle,
+    onRequestMenuToggle: handleRequestMenuToggle,
+    onDropRequestOnCollection: dropRequestOnCollection,
+    onCollectionDragOver: handleCollectionDragOver,
+    onDropRequest: dropRequest,
+    onCollectionDragStart: setDraggedCollectionId,
+    onCollectionDragEnd: () => {
+      setDraggedCollectionId(null);
+      setDragOverCollectionId(null);
+    },
+    onRequestDragStart: setDraggedRequestId,
+    onRequestDragOver: setDragOverRequestId,
+    onRequestDragEnd: () => {
+      setDraggedRequestId(null);
+      setDragOverRequestId(null);
+      setDragOverCollectionId(null);
+    },
+    consumerSessions,
+    consumerTopics,
+    consumerTopicColor,
+    consumerQos,
+    allTopics,
+    inactiveConsumerTopics,
+    activeTopicKeys,
+    liveMessages,
+    startConsumer,
+    setConsumerTopics,
+    setConsumerTopicColor,
+    setConsumerQos,
+    getTopicColor,
+    unsubscribeTopic,
+    subscribeSavedTopic,
+    deleteSavedTopic,
+    askDeleteConfirmation,
+    onBackToPublishers: () => setMainTab("publishers"),
+    brokers,
+    brokerStatuses,
+    activeConnectionId,
+    connectionView,
+    brokerDraft,
+    connectionTestMessage,
+    connectionTestPending,
+    showPassword,
+    setBrokerDraft,
+    setConnectionView,
+    setShowPassword,
+    openNewConnection,
+    openEditConnection,
+    connectBroker,
+    disconnectBroker,
+    testBroker,
+    saveBroker,
+    cancelConnectionForm,
+    deleteBroker,
+    selectedCollectionName: selectedCollection?.name,
+    activeConnection,
+    activeConnectionStatus,
+    mainTab,
+    unreadConsumerMessages,
+    onTabChange: setMainTab,
+    onOpenConnections: () => {
+      setConnectionView("list");
+      setMainTab("connections");
+    },
+  };
+
+  return (
+    <WorkspaceProvider value={workspaceContextValue}>
+      <div className="shell">
+        <CollectionSidebar />
 
       <main className="workspace">
-        <header className="topbar">
-          <div>
-            <div className="eyebrow">MQTT Workspace</div>
-            <h1>{selectedCollection?.name ?? "No collection selected"}</h1>
-          </div>
-          <div className="topbar-actions">
-            <div className="status-row">
-              {activeConnection ? (
-                <span className="connection-status-pill">
-                  <strong>{activeConnection.name}</strong>
-                  <i
-                    className={
-                      activeConnectionStatus?.connected
-                        ? "status-dot connected"
-                        : "status-dot disconnected"
-                    }
-                  />
-                  {activeConnectionStatus?.connected
-                    ? "Connected"
-                    : "Disconnected"}
-                </span>
-              ) : (
-                <span className="connection-status-pill no-connection">
-                  No Connection
-                </span>
-              )}
-            </div>
-            <div className="tab-row">
-              <button
-                className={mainTab === "publishers" ? "active" : ""}
-                onClick={() => setMainTab("publishers")}
-              >
-                Publishers
-              </button>
-              <button
-                className={mainTab === "consumers" ? "active" : ""}
-                onClick={() => setMainTab("consumers")}
-              >
-                Consumers
-                {unreadConsumerMessages > 0 && (
-                  <span className="nav-badge">
-                    {unreadConsumerMessages > 99
-                      ? "99+"
-                      : unreadConsumerMessages}
-                  </span>
-                )}
-              </button>
-              <button
-                className={mainTab === "connections" ? "active" : ""}
-                onClick={() => {
-                  setConnectionView("list");
-                  setMainTab("connections");
-                }}
-              >
-                Connections
-              </button>
-            </div>
-          </div>
-        </header>
+        <WorkspaceHeader />
 
         {mainTab === "publishers" ? (
-          <section className="editor-grid">
+          <PublishersPage>
             <div
               className={`card editor-card ${!selectedRequestId ? "request-editor-empty" : ""}`}
             >
@@ -2600,465 +2277,11 @@ export default function App() {
                 </div>
               )}
             </div>
-          </section>
+          </PublishersPage>
         ) : mainTab === "consumers" ? (
-          <section className="consumer-screen">
-            <div className="card consumer-card">
-              <div className="card-head">
-                <div>
-                  <div className="card-title">Consumers</div>
-                  <div className="card-sub">
-                    Subscribe to MQTT topics and inspect incoming messages in
-                    realtime.
-                  </div>
-                </div>
-                <button onClick={() => setMainTab("publishers")}>
-                  Back to publishers
-                </button>
-              </div>
-              <div className="consumer-layout">
-                <div className="card-section">
-                  <div className="section-head">
-                    <span>Start consumer</span>
-                    <button onClick={startConsumer} className="primary">
-                      Subscribe
-                    </button>
-                  </div>
-                  <div className="topic-input-with-color">
-                    <TopicAutocomplete
-                      label="Topics comma separated"
-                      value={consumerTopics}
-                      topics={allTopics}
-                      onChange={setConsumerTopics}
-                    />
-                    <input
-                      className="topic-color-picker"
-                      type="color"
-                      value={consumerTopicColor}
-                      aria-label="Choose topic color"
-                      title="Choose topic color"
-                      onChange={(event) => {
-                        setConsumerTopicColor(event.target.value);
-                        localStorage.setItem(
-                          "mqtt-postwoman.consumerTopicColor",
-                          event.target.value,
-                        );
-                      }}
-                    />
-                  </div>
-                  <label>
-                    QoS
-                    <select
-                      value={consumerQos}
-                      onChange={(event) =>
-                        setConsumerQos(Number(event.target.value))
-                      }
-                    >
-                      <option value={0}>0</option>
-                      <option value={1}>1</option>
-                      <option value={2}>2</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="card-section">
-                  <div className="section-head">
-                    <span>Active sessions</span>
-                  </div>
-                  <div className="session-list">
-                    {consumerSessions.flatMap((session) =>
-                      (JSON.parse(session.topicsJson) as string[]).map(
-                        (topic) => (
-                          <div
-                            key={`${session.id}:${topic}`}
-                            className="session-row consumer-session-topic"
-                            style={{ borderLeftColor: getTopicColor(topic) }}
-                          >
-                            <strong>{topic}</strong>
-                            <button
-                              onClick={() =>
-                                unsubscribeTopic(session.id, topic)
-                              }
-                            >
-                              Unsubscribe
-                            </button>
-                          </div>
-                        ),
-                      ),
-                    )}
-                    {inactiveConsumerTopics
-                      .filter((item) => !activeTopicKeys.has(item.key))
-                      .map((item) => (
-                        <div
-                          key={`inactive:${item.key}`}
-                          className="session-row consumer-session-topic inactive-session"
-                          style={{ borderLeftColor: getTopicColor(item.topic) }}
-                        >
-                          <strong>{item.topic}</strong>
-                          <div className="button-row">
-                            <button onClick={() => subscribeSavedTopic(item)}>
-                              Subscribe
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() =>
-                                askDeleteConfirmation(
-                                  "Delete saved topic",
-                                  `Delete saved topic "${item.topic}"?`,
-                                  () => deleteSavedTopic(item.key),
-                                )
-                              }
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              </div>
-              <div className="card-section live-consumer-messages">
-                <div className="section-head">
-                  <span>Live messages</span>
-                </div>
-                <div className="message-list">
-                  {liveMessages.map((message) => (
-                    <div
-                      key={message.log.id}
-                      className="message-row"
-                      style={{ borderLeftColor: getTopicColor(message.topic) }}
-                    >
-                      <strong>{message.topic}</strong>
-                      <small>
-                        {typeof message.payloadJson === "object"
-                          ? toPrettyJson(message.payloadJson)
-                          : message.payloadText}
-                      </small>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
+          <ConsumersPage />
         ) : (
-          <section className="connections-grid">
-            <div className="card connection-manager">
-              <div className="card-head">
-                <div className="mt-3">
-                  <div className="card-title">Connections</div>
-                  <div className="card-sub">
-                    Choose one active connection for the workspace, or
-                    create/edit connection profiles here.
-                  </div>
-                </div>
-                <div className="button-row">
-                  {connectionView === "list" ? (
-                    <>
-                      <button onClick={openNewConnection} className="primary">
-                        New connection
-                      </button>
-                      <button onClick={() => setMainTab("publishers")}>
-                        Back to publishers
-                      </button>
-                    </>
-                  ) : (
-                    <button onClick={() => setConnectionView("list")}>
-                      Back to list
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {connectionView === "list" ? (
-                <div className="connection-list mt-3">
-                  {brokers.length === 0 ? (
-                    <div className="empty-state">
-                      <strong>No connections yet</strong>
-                      <small>Click New connection to add one.</small>
-                    </div>
-                  ) : (
-                    brokers.map((broker) => {
-                      const status = brokerStatuses.find(
-                        (item) => item.profileId === broker.id,
-                      );
-                      const isActive = broker.id === activeConnectionId;
-                      return (
-                        <div
-                          key={broker.id}
-                          className={`connection-row ${isActive ? "active" : ""}`}
-                        >
-                          <div className="connection-details">
-                            <strong className="connection-name">
-                              {broker.name}
-                            </strong>
-                            <small className="connection-endpoint">
-                              {broker.host}:{broker.port} · {broker.protocol}
-                            </small>
-                            <small
-                              className={
-                                status?.connected
-                                  ? "connection-status connected"
-                                  : "connection-status"
-                              }
-                            >
-                              {status?.connected ? "connected" : "disconnected"}
-                              {status?.lastError
-                                ? ` · ${status.lastError}`
-                                : ""}
-                            </small>
-                          </div>
-                          <div className="button-row">
-                            <button onClick={() => openEditConnection(broker)}>
-                              Edit
-                            </button>
-                            {status?.connected && (
-                              <button
-                                className="danger"
-                                onClick={() => disconnectBroker(broker.id)}
-                              >
-                                Disconnect
-                              </button>
-                            )}
-                            <button
-                              className={
-                                status?.connected ? "connected" : "primary"
-                              }
-                              disabled={status?.connected === true}
-                              onClick={() => connectBroker(broker.id)}
-                            >
-                              {status?.connected ? "Connected" : "Connect"}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              ) : (
-                <div className="connections-form">
-                  <div className="section-head">
-                    <span>
-                      {brokerDraft.id ? "Edit connection" : "Create connection"}
-                    </span>
-                  </div>
-                  <div className="connection-primary-row">
-                    <label className="connection-name-field">
-                      Name
-                      <input
-                        value={brokerDraft.name}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            name: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="inline switch-control mb-3">
-                      <input
-                        type="checkbox"
-                        checked={brokerDraft.validateCertificate}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            validateCertificate: event.target.checked,
-                          })
-                        }
-                      />
-                      Validate certificate
-                    </label>
-                    <label className="inline switch-control mb-3">
-                      <input
-                        type="checkbox"
-                        checked={brokerDraft.encryption}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            encryption: event.target.checked,
-                          })
-                        }
-                      />
-                      Encryption (TLS)
-                    </label>
-                  </div>
-                  <div className="connection-endpoint-row">
-                    <label className="connection-protocol-field">
-                      Protocol
-                      <select
-                        value={brokerDraft.protocol}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            protocol: event.target.value,
-                          })
-                        }
-                      >
-                        <option value="mqtt">mqtt://</option>
-                        <option value="ws">ws://</option>
-                      </select>
-                    </label>
-                    <label>
-                      Host
-                      <input
-                        value={brokerDraft.host}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            host: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="connection-port-field">
-                      Port
-                      <input
-                        type="number"
-                        value={brokerDraft.port}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            port: Number(event.target.value),
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="connection-credentials-row">
-                    <label>
-                      Client ID
-                      <input
-                        value={brokerDraft.clientId}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            clientId: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Username
-                      <input
-                        value={brokerDraft.username}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            username: event.target.value,
-                          })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Password
-                      <span className="password-field">
-                        <input
-                          type={showPassword ? "text" : "password"}
-                          value={brokerDraft.password}
-                          onChange={(event) =>
-                            setBrokerDraft({
-                              ...brokerDraft,
-                              password: event.target.value,
-                            })
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="password-toggle"
-                          aria-label={
-                            showPassword ? "Hide password" : "Show password"
-                          }
-                          title={
-                            showPassword ? "Hide password" : "Show password"
-                          }
-                          onClick={() => setShowPassword((current) => !current)}
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z" />
-                            <circle cx="12" cy="12" r="2.5" />
-                            {!showPassword && <path d="m4 4 16 16" />}
-                          </svg>
-                        </button>
-                      </span>
-                    </label>
-                  </div>
-                  <div className="connection-advanced-row">
-                    <label>
-                      Keep alive
-                      <input
-                        type="number"
-                        value={brokerDraft.keepAlive}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            keepAlive: Number(event.target.value),
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="inline mb-3">
-                      <input
-                        type="checkbox"
-                        checked={brokerDraft.clean}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            clean: event.target.checked,
-                          })
-                        }
-                      />
-                      Clean session
-                    </label>
-                    <label>
-                      Reconnect period
-                      <input
-                        type="number"
-                        value={brokerDraft.reconnectPeriod}
-                        onChange={(event) =>
-                          setBrokerDraft({
-                            ...brokerDraft,
-                            reconnectPeriod: Number(event.target.value),
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="connection-form-actions">
-                    <button
-                      onClick={testBroker}
-                      disabled={connectionTestPending}
-                    >
-                      {connectionTestPending ? "Testing..." : "Test connection"}
-                    </button>
-                    <button onClick={saveBroker} className="primary">
-                      Save
-                    </button>
-                    <button onClick={cancelConnectionForm}>Cancel</button>
-                    {brokerDraft.id && (
-                      <button
-                        onClick={() =>
-                          askDeleteConfirmation(
-                            "Delete connection",
-                            "Delete this connection?",
-                            deleteBroker,
-                          )
-                        }
-                        className="danger"
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                  {connectionTestMessage && (
-                    <div
-                      className={`connection-test-alert ${connectionTestMessage.type}`}
-                      role="alert"
-                    >
-                      {connectionTestMessage.text}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
+          <ConnectionsPage />
         )}
 
         {error && <div className="error-banner">{error}</div>}
@@ -3253,6 +2476,7 @@ export default function App() {
         closeOnClick
         pauseOnFocusLoss
       />
-    </div>
+      </div>
+    </WorkspaceProvider>
   );
 }
