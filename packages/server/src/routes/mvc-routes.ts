@@ -31,7 +31,7 @@ export function buildMvcRouter(dataSource: DataSource, runtime: RuntimeService) 
   router.get("/collections/:id/export", route(async (req: Request, res: Response) => {
     const result = await controllers.collectionTransfer.export(req.params.id);
     res.type("application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${CollectionTransferController.safeFileName(result.collection.name)}.zip"`);
+    res.setHeader("Content-Disposition", `attachment; filename="${CollectionTransferController.safeFileName(result.collection.name)}.mqtt-postgirl.zip"`);
     res.send(result.buffer);
   }));
   router.post("/collections/import", express.raw({ type: "application/zip", limit: "10mb" }), route(async (req: Request, res: Response) => {

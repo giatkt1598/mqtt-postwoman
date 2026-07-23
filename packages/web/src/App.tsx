@@ -630,7 +630,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${collection.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-") || "collection"}.zip`;
+      link.download = `${collection.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-") || "collection"}.mqtt-postgirl.zip`;
       link.click();
       URL.revokeObjectURL(url);
       closeActionPopover();

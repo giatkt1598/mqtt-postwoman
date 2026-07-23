@@ -1,4 +1,4 @@
-# MQTT Postwoman
+# MQTT -PostGirl
 
 Local-first MQTT test tool with collection/request CRUD, environment management, template helpers, publish/batch publish, consumer sessions, and realtime logs.
 

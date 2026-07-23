@@ -77,7 +77,7 @@ export function CollectionSidebar() {
       <div className="brand">
         <div className="brand-mark">MP</div>
         <div>
-          <div className="brand-title">MQTT Postwoman</div>
+          <div className="brand-title">MQTT -PostGirl</div>
           <div className="brand-sub">Local-first MQTT control room</div>
         </div>
       </div>
