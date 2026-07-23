@@ -10,7 +10,7 @@ export function resolveBuiltinFunction(
   context: TemplateContext,
 ) {
   const [name, ...args] = token.split(":");
-  const definition = builtinRegistry.get(name);
+  const definition = name ? builtinRegistry.get(name) : undefined;
   if (!definition) return { matched: false, value: undefined };
   return { matched: true, value: definition.resolve(args, context) };
 }

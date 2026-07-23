@@ -1,26 +1,35 @@
 import { z } from "zod";
-import { AppDatabase } from "../db";
 import { AppRepositories } from "../repositories";
-import { RuntimeManager } from "../runtime";
-import { resolveTemplatePayload } from "../template";
+import { RuntimeService } from "../runtime";
+import { createTemplateHelperMap, resolveTemplatePayload } from "../template";
 import { parseObjectLike } from "../utils";
 
-export class AppServices {
-  constructor(private readonly repos: AppRepositories, private readonly legacyDb: AppDatabase, private readonly runtime: RuntimeManager) {}
+export type CollectionInput = { id?: string | undefined; name: string; description?: string | null | undefined; variableCollectionId?: string | null | undefined };
+export type RequestInput = { id?: string | undefined; collectionId: string; name: string; topic: string; payloadTemplate: string; qos?: number | undefined; retain?: boolean | number | undefined; brokerProfileId?: string | null | undefined };
+export type VariableCollectionInput = { id?: string | undefined; name: string };
+export type VariableInput = { id?: string | undefined; variableCollectionId: string; name: string; value?: string | undefined; sortOrder?: number | undefined };
+export type BrokerInput = { id?: string | undefined; name: string; host: string; port: number; protocol: string; validateCertificate?: boolean | number | undefined; encryption?: boolean | number | undefined; username?: string | null | undefined; password?: string | null | undefined; clientId?: string | undefined; clean?: boolean | number | undefined; keepAlive?: number | undefined; reconnectPeriod?: number | undefined; caCert?: string | null | undefined; clientCert?: string | null | undefined; clientKey?: string | null | undefined };
+export type PublishInput = { requestId?: string | undefined; brokerProfileId?: string | undefined; topic?: string | undefined; payloadTemplate?: string | undefined; qos?: number | undefined; retain?: boolean | undefined; variableCollectionId?: string | null | undefined; variables?: Record<string, unknown> | undefined; _sequenceOffset?: number | undefined };
+export type BatchPublishInput = PublishInput & { count?: number | undefined; delayMs?: number | undefined; items?: Array<{ topic?: string | undefined; payloadTemplate?: string | undefined; variables?: Record<string, unknown> | undefined }> | undefined };
 
-  collections = { list: () => this.repos.listCollections(), save: (input: any) => this.repos.saveCollection(input), delete: (id: string) => this.repos.deleteCollection(id), reorder: (ids: string[]) => this.repos.reorderCollections(ids), duplicate: (id: string) => this.repos.duplicateCollection(id) };
-  requests = { list: (collectionId?: string) => this.repos.listRequests(collectionId), get: (id: string) => this.repos.getRequest(id), save: (input: any) => this.repos.saveRequest(input), delete: (id: string) => this.repos.deleteRequest(id), reorder: (collectionId: string, ids: string[]) => this.repos.reorderRequests(collectionId, ids) };
-  variables = { collections: () => this.repos.listVariableCollections(), collection: (id: string) => this.repos.getVariableCollection(id), saveCollection: (input: any) => this.repos.saveVariableCollection(input), deleteCollection: (id: string) => this.repos.deleteVariableCollection(id), list: (id?: string) => this.repos.listVariables(id), get: (id: string) => this.repos.getVariable(id), save: (input: any) => this.repos.saveVariable(input), delete: (id: string) => this.repos.deleteVariable(id), reorder: (id: string, ids: string[]) => this.repos.reorderVariables(id, ids) };
-  brokers = { list: () => this.repos.listBrokers(), get: (id: string) => this.repos.getBroker(id), save: (input: any) => this.repos.saveBroker(input), delete: (id: string) => this.repos.deleteBroker(id) };
-  helpers = { list: () => this.repos.listHelpers(), save: (input: any) => this.repos.saveHelper(input), delete: (id: string) => this.repos.deleteHelper(id) };
+export class AppServices {
+  constructor(public readonly repositories: AppRepositories, private readonly runtime: RuntimeService) {}
+
+  private get repos() { return this.repositories; }
+  collections = { list: () => this.repos.listCollections(), save: (input: CollectionInput) => this.repos.saveCollection(input), delete: (id: string) => this.repos.deleteCollection(id), reorder: (ids: string[]) => this.repos.reorderCollections(ids), duplicate: (id: string) => this.repos.duplicateCollection(id) };
+  requests = { list: (collectionId?: string) => this.repos.listRequests(collectionId), get: (id: string) => this.repos.getRequest(id), save: (input: RequestInput) => this.repos.saveRequest(input), delete: (id: string) => this.repos.deleteRequest(id), reorder: (collectionId: string, ids: string[]) => this.repos.reorderRequests(collectionId, ids) };
+  variables = { collections: () => this.repos.listVariableCollections(), collection: (id: string) => this.repos.getVariableCollection(id), saveCollection: (input: VariableCollectionInput) => this.repos.saveVariableCollection(input), deleteCollection: (id: string) => this.repos.deleteVariableCollection(id), list: (id?: string) => this.repos.listVariables(id), get: (id: string) => this.repos.getVariable(id), save: (input: VariableInput) => this.repos.saveVariable(input), delete: (id: string) => this.repos.deleteVariable(id), reorder: (id: string, ids: string[]) => this.repos.reorderVariables(id, ids) };
+  brokers = { list: () => this.repos.listBrokers(), get: (id: string) => this.repos.getBroker(id), save: (input: BrokerInput) => this.repos.saveBroker(input), delete: (id: string) => this.repos.deleteBroker(id) };
+  helpers = { list: () => this.repos.listHelpers(), save: (input: { id?: string | undefined; name: string; kind: string; configJson: string }) => this.repos.saveHelper(input), delete: (id: string) => this.repos.deleteHelper(id) };
   logs = { list: (limit?: number) => this.repos.listLogs(limit), clear: () => this.repos.clearLogs() };
 
   async resolve(template: string, variableCollectionId: string | null | undefined, variables: Record<string, unknown>, sequenceOffset = 0) {
     const values = variableCollectionId ? Object.fromEntries((await this.repos.listVariables(variableCollectionId)).map((item) => [item.name, item.value])) : {};
-    return resolveTemplatePayload(this.legacyDb, template, null, { ...values, ...parseObjectLike(variables) }, sequenceOffset);
+    const helpers = createTemplateHelperMap(await this.repos.listHelpers());
+    return resolveTemplatePayload(template, { variableCollection: values, variables: parseObjectLike(variables), helpers, sequenceOffset });
   }
 
-  async publish(input: { requestId?: string; brokerProfileId?: string; topic?: string; payloadTemplate?: string; qos?: number; retain?: boolean; variableCollectionId?: string | null; variables?: Record<string, unknown>; _sequenceOffset?: number }) {
+  async publish(input: PublishInput) {
     const request = input.requestId ? await this.repos.getRequest(input.requestId) : undefined;
     if (input.requestId && !request) throw new Error("Request not found");
     const collection = request ? await this.repos.getCollection(request.collectionId) : undefined;
@@ -36,13 +45,13 @@ export class AppServices {
     return this.runtime.publish(brokerProfileId, resolvedTopic.text, payload, { qos: input.qos ?? request?.qos ?? 0, retain: input.retain ?? Boolean(request?.retain) }, input.requestId ?? request?.id ?? null, variables);
   }
 
-  async batchPublish(input: any) {
+  async batchPublish(input: BatchPublishInput) {
     const count = input.count ?? 10;
-    const items = input.items?.length ? input.items : Array.from({ length: count }, () => ({}));
+    const items: Array<{ topic?: string | undefined; payloadTemplate?: string | undefined; variables?: Record<string, unknown> | undefined }> = input.items?.length ? input.items : Array.from({ length: count }, () => ({}));
     const results = [];
     for (const [index, item] of items.entries()) {
       results.push(await this.publish({ ...input, topic: item.topic ?? input.topic, payloadTemplate: item.payloadTemplate ?? input.payloadTemplate, variables: item.variables ?? input.variables, requestId: input.requestId, _sequenceOffset: index }));
-      if (input.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, input.delayMs));
+      if ((input.delayMs ?? 0) > 0) await new Promise((resolve) => setTimeout(resolve, input.delayMs ?? 0));
     }
     return { count: results.length, results };
   }

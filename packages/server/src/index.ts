@@ -1,31 +1,31 @@
 import "reflect-metadata";
+import express from "express";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { createApp } from "./app";
 import { initializeDatabase } from "./database/data-source";
-import { bootstrapState, openDatabase } from "./db";
-import { RealtimeEvent, RuntimeManager } from "./runtime";
+import { AppRepositories } from "./repositories";
+import { RealtimeEvent, RuntimeService } from "./runtime";
 
 async function main() {
-  // TypeORM owns schema creation and migrations. The legacy facade remains available
-  // for compatibility while the HTTP/runtime layers are moved to repositories.
+  // TypeORM owns schema creation and migrations before the HTTP server starts.
   const dataSource = await initializeDatabase();
-  const db = openDatabase();
+  const repositories = new AppRepositories(dataSource);
 
   const sockets = new Set<WebSocket>();
   const broadcaster = (event: RealtimeEvent) => {
     const payload = JSON.stringify(event);
     for (const socket of sockets) if (socket.readyState === socket.OPEN) socket.send(payload);
   };
-  const runtime = new RuntimeManager(db, broadcaster);
-  const app = createApp(db, runtime, dataSource);
+  const runtime = new RuntimeService(repositories, broadcaster);
+  const app = createApp(dataSource, runtime);
 
   const webDist = path.resolve(__dirname, "../../web/dist");
   if (fs.existsSync(webDist)) {
-    app.use(require("express").static(webDist));
-    app.use((req: any, res: any, next: any) => {
+    app.use(express.static(webDist));
+    app.use((req, res, next) => {
       if (req.path.startsWith("/api") || (req.method !== "GET" && req.method !== "HEAD")) return next();
       return res.sendFile(path.join(webDist, "index.html"));
     });
@@ -35,7 +35,7 @@ async function main() {
   const wss = new WebSocketServer({ server, path: "/ws" });
   wss.on("connection", (socket) => {
     sockets.add(socket);
-    socket.send(JSON.stringify({ type: "bootstrap", payload: bootstrapState(db.raw) }));
+    void repositories.bootstrap().then((payload) => socket.send(JSON.stringify({ type: "bootstrap", payload })));
     socket.on("close", () => sockets.delete(socket));
   });
 

@@ -1,6 +1,7 @@
 export type Id = string;
 
 export interface CollectionRow {
+  [key: string]: unknown;
   id: Id;
   name: string;
   description: string | null;
@@ -11,6 +12,7 @@ export interface CollectionRow {
 }
 
 export interface RequestRow {
+  [key: string]: unknown;
   id: Id;
   collectionId: Id;
   name: string;
@@ -25,6 +27,7 @@ export interface RequestRow {
 }
 
 export interface VariableCollectionRow {
+  [key: string]: unknown;
   id: Id;
   name: string;
   createdAt: string;
@@ -32,6 +35,7 @@ export interface VariableCollectionRow {
 }
 
 export interface VariableRow {
+  [key: string]: unknown;
   id: Id;
   variableCollectionId: Id;
   name: string;
@@ -42,6 +46,7 @@ export interface VariableRow {
 }
 
 export interface BrokerProfileRow {
+  [key: string]: unknown;
   id: Id;
   name: string;
   host: string;
@@ -65,6 +70,7 @@ export interface BrokerProfileRow {
 export type HelperKind = "literal" | "now" | "uuid" | "randomInt" | "env";
 
 export interface TemplateHelperRow {
+  [key: string]: unknown;
   id: Id;
   name: string;
   kind: HelperKind;
@@ -74,6 +80,7 @@ export interface TemplateHelperRow {
 }
 
 export interface ConsumerSessionRow {
+  [key: string]: unknown;
   id: Id;
   name: string;
   brokerProfileId: Id;
@@ -87,6 +94,7 @@ export interface ConsumerSessionRow {
 export type MessageDirection = "publish" | "consume";
 
 export interface MessageLogRow {
+  [key: string]: unknown;
   id: Id;
   direction: MessageDirection;
   topic: string;

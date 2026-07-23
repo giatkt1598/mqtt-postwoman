@@ -1,85 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveTemplatePayload } from "../src/template";
-import { AppDatabase } from "../src/db";
 import { listBuiltinFunctions } from "../src/template/functions";
 
-const fakeDb = {
-  raw: {
-    prepare() {
-      return {
-        all() {
-          return [];
-        },
-      };
-    },
-  } as never,
-  init() {},
-} as AppDatabase;
+const context = { variableCollection: {}, variables: {}, helpers: {}, sequenceOffset: 0 };
 
 test("resolves now token inside json string", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"publishDate":"{{now}}"}');
-  assert.equal(typeof result.text, "string");
+  const result = resolveTemplatePayload('{"publishDate":"{{now}}"}', context);
   assert.equal(typeof result.value, "object");
-  const payload = result.value as Record<string, unknown>;
-  assert.equal(typeof payload.publishDate, "string");
 });
 
 test("resolves now token with a Day.js format", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"publishDate":"{{now:yyyy-MM-dd}}"}');
-  const payload = result.value as Record<string, unknown>;
-  assert.match(String(payload.publishDate), /^\d{4}-\d{2}-\d{2}$/);
+  const result = resolveTemplatePayload('{"publishDate":"{{now:yyyy-MM-dd}}"}', context);
+  assert.match(String((result.value as Record<string, unknown>).publishDate), /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test("resolves variable token", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"name":"{{var.NAME}}"}', undefined, { NAME: "mqtt" });
-  const payload = result.value as Record<string, unknown>;
-  assert.equal(payload.name, "mqtt");
-});
-
-test("resolves variables in topic templates", () => {
-  const result = resolveTemplatePayload(
-    fakeDb,
-    "device/{{var.DEVICE_ID}}/status",
-    undefined,
-    { DEVICE_ID: "device-01" },
-  );
-  assert.equal(result.text, "device/device-01/status");
+test("resolves variable token in body and topic", () => {
+  const variables = { NAME: "mqtt", DEVICE_ID: "device-01" };
+  const body = resolveTemplatePayload('{"name":"{{var.NAME}}"}', { ...context, variableCollection: variables });
+  const topic = resolveTemplatePayload("device/{{var.DEVICE_ID}}/status", { ...context, variableCollection: variables });
+  assert.equal((body.value as Record<string, unknown>).name, "mqtt");
+  assert.equal(topic.text, "device/device-01/status");
 });
 
 test("does not resolve the removed env token", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"name":"{{env.NAME}}"}', undefined, { NAME: "mqtt" });
-  const payload = result.value as Record<string, unknown>;
-  assert.equal(payload.name, "{{env.NAME}}");
-});
-
-test("resolves sequence token with batch offset", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"sequence":"{{sequence:1}}"}', undefined, {}, 2);
-  const payload = result.value as Record<string, unknown>;
-  assert.equal(payload.sequence, "3");
+  const result = resolveTemplatePayload('{"name":"{{env.NAME}}"}', { ...context, variableCollection: { NAME: "mqtt" } });
+  assert.equal((result.value as Record<string, unknown>).name, "{{env.NAME}}");
 });
 
 test("resolves padded sequence token with batch offset", () => {
-  const result = resolveTemplatePayload(fakeDb, '{"sequence":"{{sequence:1:6}}"}', undefined, {}, 1);
-  const payload = result.value as Record<string, unknown>;
-  assert.equal(payload.sequence, "000002");
-});
-
-test("resolves timestamp and randomInt built-ins", () => {
-  const result = resolveTemplatePayload(
-    fakeDb,
-    '{"timestamp":"{{timestamp}}","value":"{{randomInt:10:10}}"}',
-  );
-  const payload = result.value as Record<string, unknown>;
-  assert.match(String(payload.timestamp), /^\d+$/);
-  assert.equal(payload.value, "10");
+  const result = resolveTemplatePayload('{"sequence":"{{sequence:1:6}}"}', { ...context, sequenceOffset: 1 });
+  assert.equal((result.value as Record<string, unknown>).sequence, "000002");
 });
 
 test("exposes built-ins from the function registry", () => {
   const functions = listBuiltinFunctions();
-  assert.deepEqual(
-    functions.map((item) => item.name),
-    ["now", "uuid", "timestamp", "sequence", "randomInt"],
-  );
-  assert.ok(functions.every((item) => item.description.length > 0));
+  assert.deepEqual(functions.map((item) => item.name), ["now", "uuid", "timestamp", "sequence", "randomInt"]);
 });

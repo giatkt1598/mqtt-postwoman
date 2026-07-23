@@ -1,4 +1,3 @@
-import { AppDatabase, listHelpers } from "../db";
 import { HelperKind, TemplateHelperRow } from "../types";
 import { parseObjectLike, safeJsonParse } from "../utils";
 import { TemplateContext } from "./types";
@@ -9,32 +8,29 @@ type CustomHelperResolver = (
   context: TemplateContext,
 ) => unknown;
 
-function loadCustomHelpers(db: AppDatabase) {
-  return listHelpers(db.raw).reduce<Record<string, TemplateHelperRow>>(
-    (acc, row) => {
-      acc[row.name] = row;
-      return acc;
-    },
-    {},
-  );
+function loadCustomHelpers(rows: TemplateHelperRow[]) {
+  return rows.reduce<Record<string, TemplateHelperRow>>((acc, row) => {
+    acc[row.name] = row;
+    return acc;
+  }, {});
 }
 
 const helperKindResolvers: Record<HelperKind, CustomHelperResolver> = {
   literal: (config) => config.value ?? "",
-  now: (config) => {
+  now: (config, context) => {
     const format = typeof config.format === "string" ? config.format : "";
     return builtinFunctions.find((item) => item.name === "now")?.resolve(
       [format],
-      {},
+      context,
     );
   },
-  uuid: () => builtinFunctions.find((item) => item.name === "uuid")?.resolve([], {}),
-  randomInt: (config) => {
+  uuid: (_config, context) => builtinFunctions.find((item) => item.name === "uuid")?.resolve([], context),
+  randomInt: (config, context) => {
     const min = String(config.min ?? 0);
     const max = String(config.max ?? 999999);
     return builtinFunctions.find((item) => item.name === "randomInt")?.resolve(
       [min, max],
-      {},
+      context,
     );
   },
   env: (config, context) => {
@@ -43,8 +39,8 @@ const helperKindResolvers: Record<HelperKind, CustomHelperResolver> = {
   },
 };
 
-export function createTemplateHelperMap(db: AppDatabase) {
-  return loadCustomHelpers(db);
+export function createTemplateHelperMap(rows: TemplateHelperRow[]) {
+  return loadCustomHelpers(rows);
 }
 
 export function resolveCustomHelper(

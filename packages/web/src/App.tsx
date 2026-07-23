@@ -335,11 +335,12 @@ export default function App() {
             status?: string;
             error?: string;
           };
-          if (!status.profileId) return;
+          const profileId = status.profileId;
+          if (!profileId) return;
           setBrokerStatuses((current) =>
-            current.some((item) => item.profileId === status.profileId)
+            current.some((item) => item.profileId === profileId)
               ? current.map((item) =>
-                  item.profileId === status.profileId
+                  item.profileId === profileId
                     ? {
                         ...item,
                         connected:
@@ -360,7 +361,7 @@ export default function App() {
                 )
               : [
                   {
-                    profileId: status.profileId,
+                    profileId,
                     connected: status.status === "connected",
                     refCount: 0,
                     lastError:
@@ -439,11 +440,12 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (draft.id) {
+    const draftId = draft.id;
+    if (draftId) {
       setRequestDrafts((current) =>
-        current[draft.id] === draft
+        current[draftId] === draft
           ? current
-          : { ...current, [draft.id]: draft },
+          : { ...current, [draftId]: draft },
       );
     }
   }, [draft]);
@@ -525,8 +527,9 @@ export default function App() {
   };
 
   const selectRequest = (request: RequestRow) => {
-    if (draft.id) {
-      setRequestDrafts((current) => ({ ...current, [draft.id]: draft }));
+    const draftId = draft.id;
+    if (draftId) {
+      setRequestDrafts((current) => ({ ...current, [draftId]: draft }));
     }
     setSelectedCollectionId(request.collectionId);
     setSelectedRequestId(request.id);
@@ -686,6 +689,10 @@ export default function App() {
       return;
     }
     const [moved] = reordered.splice(sourceIndex, 1);
+    if (!moved) {
+      setDraggedRequestId(null);
+      return;
+    }
     reordered.splice(targetIndex, 0, moved);
     void reorderCollectionRequests(
       collectionId,
@@ -796,6 +803,10 @@ export default function App() {
       return;
     }
     const [moved] = reordered.splice(sourceIndex, 1);
+    if (!moved) {
+      setDraggedCollectionId(null);
+      return;
+    }
     reordered.splice(targetIndex, 0, moved);
 
     try {
@@ -903,7 +914,8 @@ export default function App() {
     setSelectedRequestId("");
     setRequestDrafts((current) => {
       const next = { ...current };
-      delete next[draft.id];
+      const draftId = draft.id;
+      if (draftId) delete next[draftId];
       return next;
     });
     setDraft(
@@ -1327,9 +1339,9 @@ export default function App() {
       port: broker.port,
       protocol:
         broker.protocol === "ws" || broker.protocol === "wss" ? "ws" : "mqtt",
-      validateCertificate: broker.validateCertificate !== 0,
+      validateCertificate: broker.validateCertificate,
       encryption:
-        broker.encryption !== 0 ||
+        broker.encryption ||
         broker.protocol === "mqtts" ||
         broker.protocol === "wss",
       username: broker.username ?? "",

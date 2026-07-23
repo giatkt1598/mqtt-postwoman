@@ -16,6 +16,49 @@ const API_BASE_URL =
 const WS_BASE_URL =
   import.meta.env.VITE_WS_URL ?? API_BASE_URL.replace(/^http/, "ws");
 
+type CollectionWrite = {
+  id?: string | undefined;
+  name: string;
+  description?: string | null | undefined;
+  variableCollectionId?: string | null | undefined;
+};
+type RequestWrite = {
+  id?: string | undefined;
+  collectionId: string;
+  name: string;
+  topic: string;
+  payloadTemplate: string;
+  qos: number;
+  retain: boolean;
+  brokerProfileId?: string | null | undefined;
+};
+type VariableCollectionWrite = { id?: string | undefined; name: string };
+type VariableWrite = {
+  id?: string | undefined;
+  variableCollectionId?: string | undefined;
+  name: string;
+  value: string;
+  sortOrder?: number | undefined;
+};
+type BrokerWrite = {
+  id?: string | undefined;
+  name: string;
+  host: string;
+  port: number;
+  protocol: string;
+  validateCertificate: boolean;
+  encryption: boolean;
+  username?: string | null | undefined;
+  password?: string | null | undefined;
+  clientId: string;
+  clean: boolean;
+  keepAlive: number;
+  reconnectPeriod: number;
+  caCert?: string | null | undefined;
+  clientCert?: string | null | undefined;
+  clientKey?: string | null | undefined;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}/api${path}`, {
     headers: {
@@ -39,12 +82,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const apiClient = {
   bootstrap: () => request<BootstrapState>("/bootstrap"),
   collections: {
-    create: (payload: Partial<CollectionRow> & { name: string }) =>
+    create: (payload: CollectionWrite) =>
       request<CollectionRow>("/collections", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: Partial<CollectionRow> & { name: string }) =>
+    update: (id: string, payload: CollectionWrite) =>
       request<CollectionRow>(`/collections/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
@@ -62,12 +105,12 @@ export const apiClient = {
       }),
   },
   requests: {
-    create: (payload: Partial<RequestRow> & Record<string, unknown>) =>
+    create: (payload: RequestWrite) =>
       request<RequestRow>("/requests", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: Partial<RequestRow> & Record<string, unknown>) =>
+    update: (id: string, payload: RequestWrite) =>
       request<RequestRow>(`/requests/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
@@ -80,24 +123,24 @@ export const apiClient = {
       }),
   },
   variableCollections: {
-    create: (payload: Partial<VariableCollectionRow> & { name: string }) =>
+    create: (payload: VariableCollectionWrite) =>
       request<VariableCollectionRow>("/variable-collections", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    update: (id: string, payload: Partial<VariableCollectionRow> & { name: string }) =>
+    update: (id: string, payload: VariableCollectionWrite) =>
       request<VariableCollectionRow>(`/variable-collections/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
       }),
     remove: (id: string) => request<void>(`/variable-collections/${id}`, { method: "DELETE" }),
     variables: (id: string) => request<VariableRow[]>(`/variable-collections/${id}/variables`),
-    createVariable: (id: string, payload: Partial<VariableRow> & { name: string; value: string }) =>
+    createVariable: (id: string, payload: VariableWrite) =>
       request<VariableRow>(`/variable-collections/${id}/variables`, {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    updateVariable: (id: string, payload: Partial<VariableRow> & { name: string; value: string }) =>
+    updateVariable: (id: string, payload: VariableWrite) =>
       request<VariableRow>(`/variables/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload),
@@ -114,9 +157,9 @@ export const apiClient = {
       request<Array<{ profileId: string; connected: boolean; refCount: number; lastError: string | null }>>(
         "/brokers/status",
       ),
-    create: (payload: Partial<BrokerProfileRow> & Record<string, unknown>) =>
+    create: (payload: BrokerWrite) =>
       request<BrokerProfileRow>("/brokers", { method: "POST", body: JSON.stringify(payload) }),
-    update: (id: string, payload: Partial<BrokerProfileRow> & Record<string, unknown>) =>
+    update: (id: string, payload: BrokerWrite) =>
       request<BrokerProfileRow>(`/brokers/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
     remove: (id: string) => request<void>(`/brokers/${id}`, { method: "DELETE" }),
     connect: (id: string) =>

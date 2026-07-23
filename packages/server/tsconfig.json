@@ -6,7 +6,11 @@
     "module": "CommonJS",
     "moduleResolution": "Node",
     "types": ["node"],
-    "declaration": false
+    "declaration": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

@@ -1,5 +1,8 @@
-import { RequestHandler } from "express";
+import { NextFunction, Request, RequestHandler, Response } from "express";
+import { ParamsDictionary } from "express-serve-static-core";
 
-export const asyncHandler = (handler: RequestHandler): RequestHandler => (req, res, next) => {
-  Promise.resolve(handler(req, res, next)).catch(next);
-};
+type AsyncRequestHandler<P extends ParamsDictionary> = (req: Request<P>, res: Response, next: NextFunction) => unknown;
+
+export function asyncHandler<P extends ParamsDictionary = ParamsDictionary>(handler: AsyncRequestHandler<P>): RequestHandler<P> {
+  return (req, res, next) => { Promise.resolve(handler(req, res, next)).catch(next); };
+}

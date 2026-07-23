@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "migration:run": "tsx src/database/cli.ts run",
     "migration:revert": "tsx src/database/cli.ts revert",
     "migration:show": "tsx src/database/cli.ts show",
@@ -22,13 +23,12 @@
     "morgan": "^1.10.1",
     "mqtt": "^5.14.1",
     "reflect-metadata": "^0.2.2",
-    "typeorm": "^0.3.27",
-    "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.31",
     "ws": "^8.18.3",
     "zod": "^4.2.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",

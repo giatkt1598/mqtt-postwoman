@@ -3,14 +3,12 @@ import cors from "cors";
 import express, { Express } from "express";
 import helmet from "helmet";
 import morgan from "morgan";
-import { AppDatabase } from "./db";
-import { RuntimeManager } from "./runtime";
-import { buildRouter } from "./routes";
+import { RuntimeService } from "./runtime";
 import { buildMvcRouter } from "./routes/mvc-routes";
 import { DataSource } from "typeorm";
 import { errorHandler } from "./middleware/error-handler";
 
-export function createApp(db: AppDatabase, runtime: RuntimeManager, dataSource?: DataSource): Express {
+export function createApp(dataSource: DataSource, runtime: RuntimeService): Express {
   const app = express();
   app.disable("x-powered-by");
   app.use(helmet({ contentSecurityPolicy: false }));
@@ -19,8 +17,7 @@ export function createApp(db: AppDatabase, runtime: RuntimeManager, dataSource?:
   app.use(morgan("dev"));
   const origin = process.env.MQTT_POSTWOMAN_ORIGIN ?? "http://localhost:5173";
   app.use(cors({ origin, credentials: true }));
-  if (dataSource) app.use("/api", buildMvcRouter(dataSource, db, runtime));
-  app.use("/api", buildRouter(db, runtime));
+  app.use("/api", buildMvcRouter(dataSource, runtime));
   app.use(errorHandler);
   return app;
 }

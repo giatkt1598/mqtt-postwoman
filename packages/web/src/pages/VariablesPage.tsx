@@ -6,7 +6,8 @@ import type { VariableCollectionRow, VariableRow } from "../models";
 const emptyVariableRow = (): VariableDraftRow => ({ name: "", value: "" });
 
 function withTrailingRow(rows: VariableDraftRow[]) {
-  if (!rows.length || rows[rows.length - 1].name || rows[rows.length - 1].value) {
+  const lastRow = rows[rows.length - 1];
+  if (!lastRow || lastRow.name || lastRow.value) {
     return [...rows, emptyVariableRow()];
   }
   return rows;

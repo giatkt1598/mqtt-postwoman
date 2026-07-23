@@ -16,9 +16,9 @@ interface ConnectionStatus {
 }
 
 export interface WorkspaceHeaderProps {
-  selectedCollectionName?: string;
+  selectedCollectionName: string | undefined;
   activeConnection: ConnectionSummary | null;
-  activeConnectionStatus?: ConnectionStatus;
+  activeConnectionStatus: ConnectionStatus | undefined;
   mainTab: WorkspaceTab;
   unreadConsumerMessages: number;
   onTabChange: (tab: WorkspaceTab) => void;

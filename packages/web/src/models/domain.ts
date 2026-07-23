@@ -15,7 +15,7 @@ export interface RequestRow {
   topic: string;
   payloadTemplate: string;
   qos: number;
-  retain: number;
+  retain: boolean;
   brokerProfileId: string | null;
   sortOrder: number;
   createdAt: string;
@@ -45,12 +45,12 @@ export interface BrokerProfileRow {
   host: string;
   port: number;
   protocol: string;
-  validateCertificate: number;
-  encryption: number;
+  validateCertificate: boolean;
+  encryption: boolean;
   username: string | null;
   password: string | null;
   clientId: string;
-  clean: number;
+  clean: boolean;
   keepAlive: number;
   reconnectPeriod: number;
   caCert: string | null;
@@ -77,7 +77,7 @@ export interface ConsumerSessionRow {
   brokerProfileId: string;
   topicsJson: string;
   qos: number;
-  active: number;
+  active: boolean;
   createdAt: string;
   updatedAt: string;
 }

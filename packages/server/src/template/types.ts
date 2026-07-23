@@ -1,10 +1,10 @@
 import { TemplateHelperRow } from "../types";
 
 export interface TemplateContext {
-  variableCollection?: Record<string, unknown>;
-  variables?: Record<string, unknown>;
-  helpers?: Record<string, TemplateHelperRow>;
-  sequenceOffset?: number;
+  variableCollection: Record<string, unknown>;
+  variables: Record<string, unknown>;
+  helpers: Record<string, TemplateHelperRow>;
+  sequenceOffset: number;
 }
 
 export type TemplateFunction = (

@@ -1,74 +1,81 @@
-import { Router } from "express";
+import { Request as ExpressRequest, Response, Router } from "express";
+import { DataSource } from "typeorm";
 import { z } from "zod";
-import { AppDatabase } from "../db";
-import { AppRepositories } from "../repositories";
-import { RuntimeManager } from "../runtime";
-import { AppServices, schemas } from "../services/app-services";
-import { listBuiltinFunctions } from "../template/functions";
 import { asyncHandler } from "../middleware/async-handler";
+import { AppRepositories } from "../repositories";
+import { RuntimeService } from "../runtime";
+import { AppServices, schemas } from "../services/app-services";
 import { createControllers } from "../controllers";
+import { listBuiltinFunctions } from "../template/functions";
+import { nowIso } from "../utils";
 
-const asyncRoute = asyncHandler as any;
+const route = asyncHandler;
+type Request = ExpressRequest<{ id: string }>;
+const orderSchema = z.object({ collectionIds: z.array(z.string()).optional(), requestIds: z.array(z.string()).optional(), variableIds: z.array(z.string()).optional() });
+const consumerSchema = z.object({ name: z.string().min(1), brokerProfileId: z.string().min(1), topics: z.array(z.string().min(1)).min(1), qos: z.number().int().min(0).max(2).default(0) });
+const helperSchema = z.object({ id: z.string().optional(), name: z.string().min(1), kind: z.enum(["literal", "now", "uuid", "randomInt", "env"]), configJson: z.string().default("{}") });
+const templateSchema = z.object({ template: z.string(), variableCollectionId: z.string().nullable().optional(), variables: z.record(z.string(), z.unknown()).default({}) });
+const publishSchema = z.object({ requestId: z.string().optional(), brokerProfileId: z.string().optional(), topic: z.string().optional(), payloadTemplate: z.string().optional(), qos: z.number().int().min(0).max(2).default(0), retain: z.boolean().default(false), variableCollectionId: z.string().nullable().optional(), variables: z.record(z.string(), z.unknown()).default({}) });
+const batchSchema = publishSchema.extend({ count: z.number().int().min(1).max(1000).default(10), delayMs: z.number().int().min(0).max(60000).default(0), items: z.array(z.object({ topic: z.string().optional(), payloadTemplate: z.string().optional(), variables: z.record(z.string(), z.unknown()).optional() })).optional() });
 
-export function buildMvcRouter(dataSource: any, legacyDb: AppDatabase, runtime: RuntimeManager) {
+export function buildMvcRouter(dataSource: DataSource, runtime: RuntimeService) {
   const router = Router();
-  const services = new AppServices(new AppRepositories(dataSource), legacyDb, runtime);
-  const controllers = createControllers(services);
+  const repositories = new AppRepositories(dataSource);
+  const services = new AppServices(repositories, runtime);
+  const controllers = createControllers(services, runtime);
 
-  router.get("/collections", asyncRoute(async (_req: any, res: any) => res.json(await controllers.collections.list())));
-  router.post("/collections", asyncRoute(async (req: any, res: any) => res.status(201).json(await controllers.collections.save(schemas.collection.parse(req.body)))));
-  router.put("/collections/order", asyncRoute(async (req: any, res: any) => res.json(await controllers.collections.reorder(z.object({ collectionIds: z.array(z.string()) }).parse(req.body).collectionIds))));
-  router.put("/collections/:id", asyncRoute(async (req: any, res: any) => {
-    const input = schemas.collection.parse({ ...req.body, id: req.params.id });
-    return res.json(await controllers.collections.save(input));
-  }));
-  router.delete("/collections/:id", asyncRoute(async (req: any, res: any) => { await controllers.collections.remove(req.params.id); res.status(204).end(); }));
-  router.post("/collections/:id/duplicate", asyncRoute(async (req: any, res: any) => { const result = await controllers.collections.duplicate(req.params.id); if (!result) return res.status(404).json({ message: "Collection not found" }); return res.status(201).json(result); }));
+  router.get("/health", (_req: Request, res: Response) => res.json({ ok: true, now: nowIso() }));
+  router.get("/bootstrap", route(async (_req: Request, res: Response) => res.json(await repositories.bootstrap())));
 
-  router.get("/requests", asyncRoute(async (req: any, res: any) => res.json(await services.requests.list(typeof req.query.collectionId === "string" ? req.query.collectionId : undefined))));
-  router.post("/requests", asyncRoute(async (req: any, res: any) => res.status(201).json(await services.requests.save(schemas.request.parse(req.body)))));
-  router.put("/requests/:id", asyncRoute(async (req: any, res: any) => res.json(await services.requests.save(schemas.request.parse({ ...req.body, id: req.params.id })) )));
-  router.delete("/requests/:id", asyncRoute(async (req: any, res: any) => { await services.requests.delete(req.params.id); res.status(204).end(); }));
-  router.put("/collections/:id/requests/order", asyncRoute(async (req: any, res: any) => { const input = z.object({ requestIds: z.array(z.string()) }).parse(req.body); res.json(await services.requests.reorder(req.params.id, input.requestIds)); }));
+  router.get("/collections", route(async (_req: Request, res: Response) => res.json(await controllers.collections.list())));
+  router.post("/collections", route(async (req: Request, res: Response) => res.status(201).json(await controllers.collections.save(schemas.collection.parse(req.body)))));
+  router.put("/collections/order", route(async (req: Request, res: Response) => { const input = orderSchema.parse(req.body); if (!input.collectionIds) throw new Error("Collection order is required."); return res.json(await controllers.collections.reorder(input.collectionIds)); }));
+  router.put("/collections/:id", route(async (req: Request, res: Response) => res.json(await controllers.collections.save(schemas.collection.parse({ ...req.body, id: req.params.id })) )));
+  router.delete("/collections/:id", route(async (req: Request, res: Response) => { await controllers.collections.remove(req.params.id); res.status(204).end(); }));
+  router.post("/collections/:id/duplicate", route(async (req: Request, res: Response) => { const result = await controllers.collections.duplicate(req.params.id); if (!result) return res.status(404).json({ message: "Collection not found" }); return res.status(201).json(result); }));
 
-  router.get("/variable-collections", asyncRoute(async (_req: any, res: any) => res.json(await services.variables.collections())));
-  router.post("/variable-collections", asyncRoute(async (req: any, res: any) => res.status(201).json(await services.variables.saveCollection(schemas.variableCollection.parse(req.body)))));
-  router.put("/variable-collections/:id", asyncRoute(async (req: any, res: any) => res.json(await services.variables.saveCollection(schemas.variableCollection.parse({ ...req.body, id: req.params.id })))));
-  router.delete("/variable-collections/:id", asyncRoute(async (req: any, res: any) => { await services.variables.deleteCollection(req.params.id); res.status(204).end(); }));
-  router.get("/variable-collections/:id/variables", asyncRoute(async (req: any, res: any) => res.json(await services.variables.list(req.params.id))));
-  router.post("/variable-collections/:id/variables", asyncRoute(async (req: any, res: any) => res.status(201).json(await services.variables.save(schemas.variable.parse({ ...req.body, variableCollectionId: req.params.id })) )));
-  router.put("/variable-collections/:id/variables/order", asyncRoute(async (req: any, res: any) => { const input = z.object({ variableIds: z.array(z.string()) }).parse(req.body); res.json(await services.variables.reorder(req.params.id, input.variableIds)); }));
-  router.put("/variables/:id", asyncRoute(async (req: any, res: any) => { const current = await services.variables.get(req.params.id); if (!current) return res.status(404).json({ message: "Variable not found" }); return res.json(await services.variables.save(schemas.variable.parse({ ...current, ...req.body, id: req.params.id }))); }));
-  router.delete("/variables/:id", asyncRoute(async (req: any, res: any) => { await services.variables.delete(req.params.id); res.status(204).end(); }));
+  router.get("/requests", route(async (req: Request, res: Response) => res.json(await services.requests.list(typeof req.query.collectionId === "string" ? req.query.collectionId : undefined))));
+  router.post("/requests", route(async (req: Request, res: Response) => res.status(201).json(await controllers.requests.save(schemas.request.parse(req.body)))));
+  router.put("/requests/:id", route(async (req: Request, res: Response) => res.json(await controllers.requests.save(schemas.request.parse({ ...req.body, id: req.params.id })) )));
+  router.delete("/requests/:id", route(async (req: Request, res: Response) => { await controllers.requests.remove(req.params.id); res.status(204).end(); }));
+  router.put("/collections/:id/requests/order", route(async (req: Request, res: Response) => { const input = orderSchema.parse(req.body); if (!input.requestIds) throw new Error("Request order is required."); return res.json(await controllers.requests.reorder(req.params.id, input.requestIds)); }));
 
-  router.get("/brokers", asyncRoute(async (_req: any, res: any) => res.json(await services.brokers.list())));
-  router.get("/brokers/status", (_req, res) => res.json(runtime.listBrokerStatuses()));
-  router.post("/brokers", asyncRoute(async (req: any, res: any) => res.status(201).json(await services.brokers.save(schemas.broker.parse(req.body)))));
-  router.put("/brokers/:id", asyncRoute(async (req: any, res: any) => res.json(await services.brokers.save(schemas.broker.parse({ ...req.body, id: req.params.id })))));
-  router.delete("/brokers/:id", asyncRoute(async (req: any, res: any) => { await services.brokers.delete(req.params.id); res.status(204).end(); }));
-  router.post("/brokers/:id/connect", asyncRoute(async (req: any, res: any) => res.json(await runtime.connectBroker(req.params.id))));
-  router.post("/brokers/:id/test", asyncRoute(async (req: any, res: any) => res.json(await runtime.testBrokerConnection(req.params.id))));
-  router.post("/brokers/test", asyncRoute(async (req: any, res: any) => res.json(await runtime.testBrokerConfig(schemas.broker.omit({ id: true, name: true }).parse(req.body)))));
-  router.post("/brokers/:id/disconnect", asyncRoute(async (req: any, res: any) => { runtime.disconnectBroker(req.params.id); res.status(204).end(); }));
+  router.get("/variable-collections", route(async (_req: Request, res: Response) => res.json(await controllers.variables.listCollections())));
+  router.post("/variable-collections", route(async (req: Request, res: Response) => res.status(201).json(await controllers.variables.saveCollection(schemas.variableCollection.parse(req.body)))));
+  router.put("/variable-collections/:id", route(async (req: Request, res: Response) => res.json(await controllers.variables.saveCollection(schemas.variableCollection.parse({ ...req.body, id: req.params.id })) )));
+  router.delete("/variable-collections/:id", route(async (req: Request, res: Response) => { await controllers.variables.removeCollection(req.params.id); res.status(204).end(); }));
+  router.get("/variable-collections/:id/variables", route(async (req: Request, res: Response) => res.json(await controllers.variables.list(req.params.id))));
+  router.post("/variable-collections/:id/variables", route(async (req: Request, res: Response) => res.status(201).json(await controllers.variables.save(schemas.variable.parse({ ...req.body, variableCollectionId: req.params.id })) )));
+  router.put("/variable-collections/:id/variables/order", route(async (req: Request, res: Response) => { const input = orderSchema.parse(req.body); if (!input.variableIds) throw new Error("Variable order is required."); return res.json(await controllers.variables.reorder(req.params.id, input.variableIds)); }));
+  router.put("/variables/:id", route(async (req: Request, res: Response) => { const current = await controllers.variables.get(req.params.id); if (!current) return res.status(404).json({ message: "Variable not found" }); return res.json(await controllers.variables.save(schemas.variable.parse({ ...current, ...req.body, id: req.params.id }))); }));
+  router.delete("/variables/:id", route(async (req: Request, res: Response) => { await controllers.variables.remove(req.params.id); res.status(204).end(); }));
 
-  router.get("/helpers", asyncRoute(async (_req: any, res: any) => res.json(await services.helpers.list())));
-  router.post("/helpers", asyncRoute(async (req: any, res: any) => res.status(201).json(await services.helpers.save(req.body))));
-  router.put("/helpers/:id", asyncRoute(async (req: any, res: any) => res.json(await services.helpers.save({ ...req.body, id: req.params.id }))));
-  router.delete("/helpers/:id", asyncRoute(async (req: any, res: any) => { await services.helpers.delete(req.params.id); res.status(204).end(); }));
+  router.get("/brokers", route(async (_req: Request, res: Response) => res.json(await services.brokers.list())));
+  router.get("/brokers/status", (_req: Request, res: Response) => res.json(runtime.listBrokerStatuses()));
+  router.post("/brokers", route(async (req: Request, res: Response) => res.status(201).json(await services.brokers.save(schemas.broker.parse(req.body)))));
+  router.put("/brokers/:id", route(async (req: Request, res: Response) => res.json(await services.brokers.save(schemas.broker.parse({ ...req.body, id: req.params.id })) )));
+  router.delete("/brokers/:id", route(async (req: Request, res: Response) => { await services.brokers.delete(req.params.id); res.status(204).end(); }));
+  router.post("/brokers/:id/connect", route(async (req: Request, res: Response) => res.json(await runtime.connectBroker(req.params.id))));
+  router.post("/brokers/:id/test", route(async (req: Request, res: Response) => res.json(await runtime.testBrokerConnection(req.params.id))));
+  router.post("/brokers/test", route(async (req: Request, res: Response) => res.json(await runtime.testBrokerConfig(schemas.broker.omit({ id: true, name: true }).parse(req.body)) )));
+  router.post("/brokers/:id/disconnect", route(async (req: Request, res: Response) => { await runtime.disconnectBroker(req.params.id); res.status(204).end(); }));
 
-  router.get("/consumer-sessions", asyncRoute(async (_req: any, res: any) => res.json(await new AppRepositories(dataSource).listSessions())));
-  router.post("/consumer-sessions", asyncRoute(async (req: any, res: any) => res.status(201).json(await runtime.startConsumer(req.body))));
-  router.delete("/consumer-sessions/:id", asyncRoute(async (req: any, res: any) => { const result = await runtime.stopConsumer(req.params.id); if (!result) return res.status(404).json({ message: "Consumer session not found" }); await new AppRepositories(dataSource).deleteSession(req.params.id); return res.status(204).end(); }));
-  router.delete("/consumer-sessions/:id/topics", asyncRoute(async (req: any, res: any) => { const result = await runtime.unsubscribeConsumerTopic(req.params.id, z.object({ topic: z.string().min(1) }).parse(req.body).topic); if (!result) return res.status(404).json({ message: "Consumer session not found" }); if (!JSON.parse(result.topicsJson).length) { await new AppRepositories(dataSource).deleteSession(req.params.id); return res.status(204).end(); } return res.json(result); }));
+  router.get("/helpers", route(async (_req: Request, res: Response) => res.json(await services.helpers.list())));
+  router.post("/helpers", route(async (req: Request, res: Response) => res.status(201).json(await services.helpers.save(helperSchema.parse(req.body)))));
+  router.put("/helpers/:id", route(async (req: Request, res: Response) => res.json(await services.helpers.save(helperSchema.parse({ ...req.body, id: req.params.id })) )));
+  router.delete("/helpers/:id", route(async (req: Request, res: Response) => { await services.helpers.delete(req.params.id); res.status(204).end(); }));
 
-  router.get("/logs", asyncRoute(async (req: any, res: any) => { const limit = Math.min(Number(req.query.limit ?? 200), 1000); res.json(await services.logs.list(Number.isNaN(limit) ? 200 : limit)); }));
-  router.delete("/logs", asyncRoute(async (_req: any, res: any) => { await services.logs.clear(); res.status(204).end(); }));
+  router.get("/consumer-sessions", route(async (_req: Request, res: Response) => res.json(await repositories.listSessions())));
+  router.post("/consumer-sessions", route(async (req: Request, res: Response) => res.status(201).json(await runtime.startConsumer(consumerSchema.parse(req.body)))));
+  router.delete("/consumer-sessions/:id", route(async (req: Request, res: Response) => { const result = await runtime.stopConsumer(req.params.id); if (!result) return res.status(404).json({ message: "Consumer session not found" }); return res.status(204).end(); }));
+  router.delete("/consumer-sessions/:id/topics", route(async (req: Request, res: Response) => { const result = await runtime.unsubscribeConsumerTopic(req.params.id, z.object({ topic: z.string().min(1) }).parse(req.body).topic); if (!result) return res.status(404).json({ message: "Consumer session not found" }); return res.json(result); }));
 
-  router.post("/publish", asyncRoute(async (req: any, res: any) => res.json(await services.publish(req.body))));
-  router.post("/publish/batch", asyncRoute(async (req: any, res: any) => res.json(await services.batchPublish(req.body))));
-  router.post("/templates/resolve", asyncRoute(async (req: any, res: any) => { const input = z.object({ template: z.string(), variableCollectionId: z.string().nullable().optional(), variables: z.record(z.string(), z.any()).default({}) }).parse(req.body); res.json(await services.resolve(input.template, input.variableCollectionId, input.variables)); }));
-  router.get("/templates/functions", (_req, res) => res.json(listBuiltinFunctions()));
-  router.get("/catalog", asyncRoute(async (_req: any, res: any) => res.json(await new AppRepositories(dataSource).bootstrap())));
-
+  router.get("/logs", route(async (req: Request, res: Response) => { const limit = Math.min(Number(req.query.limit ?? 200), 1000); return res.json(await services.logs.list(Number.isNaN(limit) ? 200 : limit)); }));
+  router.delete("/logs", route(async (_req: Request, res: Response) => { await services.logs.clear(); res.status(204).end(); }));
+  router.post("/publish", route(async (req: Request, res: Response) => res.json(await controllers.publish.publish(publishSchema.parse(req.body)))));
+  router.post("/publish/batch", route(async (req: Request, res: Response) => res.json(await controllers.publish.batch(batchSchema.parse(req.body)))));
+  router.post("/templates/resolve", route(async (req: Request, res: Response) => { const input = templateSchema.parse(req.body); return res.json(await controllers.publish.resolve(input.template, input.variableCollectionId, input.variables)); }));
+  router.get("/templates/functions", (_req: Request, res: Response) => res.json(listBuiltinFunctions()));
+  router.get("/catalog", route(async (_req: Request, res: Response) => res.json(await repositories.bootstrap())));
   return router;
 }
