@@ -75,6 +75,7 @@ export function openDatabase(): AppDatabase {
           retain INTEGER NOT NULL,
           brokerProfileId TEXT,
           environmentId TEXT,
+          sortOrder INTEGER NOT NULL DEFAULT 0,
           createdAt TEXT NOT NULL,
           updatedAt TEXT NOT NULL,
           FOREIGN KEY(collectionId) REFERENCES collections(id) ON DELETE CASCADE
@@ -121,6 +122,10 @@ export function openDatabase(): AppDatabase {
       }
       if (!brokerColumns.some((column) => column.name === "encryption")) {
         raw.exec("ALTER TABLE broker_profiles ADD COLUMN encryption INTEGER NOT NULL DEFAULT 0");
+      }
+      const requestColumns = raw.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>;
+      if (!requestColumns.some((column) => column.name === "sortOrder")) {
+        raw.exec("ALTER TABLE requests ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0");
       }
     },
   };
@@ -189,11 +194,53 @@ export function deleteCollection(db: Database.Database, id: string) {
   db.prepare("DELETE FROM collections WHERE id = ?").run(id);
 }
 
+export function duplicateCollection(db: Database.Database, id: string) {
+  const source = getCollection(db, id);
+  if (!source) return undefined;
+
+  const duplicateId = createId();
+  const duplicateName = `${source.name} Copy`;
+  const requests = listRequests(db, id);
+  const timestamp = nowIso();
+
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO collections (id, name, description, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      duplicateId,
+      duplicateName,
+      source.description,
+      timestamp,
+      timestamp,
+    );
+
+    for (const request of requests) {
+      upsertRequest(db, {
+        collectionId: duplicateId,
+        name: request.name,
+        topic: request.topic,
+        payloadTemplate: request.payloadTemplate,
+        qos: request.qos,
+        retain: request.retain,
+        brokerProfileId: request.brokerProfileId,
+        environmentId: request.environmentId,
+        sortOrder: request.sortOrder,
+      });
+    }
+  })();
+
+  return {
+    collection: getCollection(db, duplicateId),
+    requests: listRequests(db, duplicateId),
+  };
+}
+
 export function listRequests(db: Database.Database, collectionId?: string) {
   if (collectionId) {
-    return db.prepare("SELECT * FROM requests WHERE collectionId = ? ORDER BY createdAt DESC").all(collectionId).map(rowToRequest);
+    return db.prepare("SELECT * FROM requests WHERE collectionId = ? ORDER BY sortOrder ASC, createdAt DESC").all(collectionId).map(rowToRequest);
   }
-  return db.prepare("SELECT * FROM requests ORDER BY createdAt DESC").all().map(rowToRequest);
+  return db.prepare("SELECT * FROM requests ORDER BY sortOrder ASC, createdAt DESC").all().map(rowToRequest);
 }
 
 export function getRequest(db: Database.Database, id: string) {
@@ -212,6 +259,7 @@ export function upsertRequest(
     retain?: boolean | number;
     brokerProfileId?: string | null;
     environmentId?: string | null;
+    sortOrder?: number;
   },
 ) {
   const id = input.id ?? createId();
@@ -235,8 +283,8 @@ export function upsertRequest(
     );
   } else {
     db.prepare(
-      `INSERT INTO requests (id, collectionId, name, topic, payloadTemplate, qos, retain, brokerProfileId, environmentId, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO requests (id, collectionId, name, topic, payloadTemplate, qos, retain, brokerProfileId, environmentId, sortOrder, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.collectionId,
@@ -247,6 +295,7 @@ export function upsertRequest(
       retain,
       input.brokerProfileId ?? null,
       input.environmentId ?? null,
+      input.sortOrder ?? 0,
       timestamp,
       timestamp,
     );
@@ -256,6 +305,32 @@ export function upsertRequest(
 
 export function deleteRequest(db: Database.Database, id: string) {
   db.prepare("DELETE FROM requests WHERE id = ?").run(id);
+}
+
+export function reorderRequests(
+  db: Database.Database,
+  collectionId: string,
+  requestIds: string[],
+) {
+  const requests = listRequests(db, collectionId);
+  const requestIdSet = new Set(requests.map((request) => request.id));
+  if (
+    requestIds.length !== requests.length ||
+    requestIds.some((requestId) => !requestIdSet.has(requestId))
+  ) {
+    throw new Error("Request order does not match the collection.");
+  }
+
+  db.transaction(() => {
+    const update = db.prepare(
+      "UPDATE requests SET sortOrder = ?, updatedAt = ? WHERE id = ? AND collectionId = ?",
+    );
+    requestIds.forEach((requestId, index) => {
+      update.run(index, nowIso(), requestId, collectionId);
+    });
+  })();
+
+  return listRequests(db, collectionId);
 }
 
 export function listEnvironments(db: Database.Database) {

@@ -38,13 +38,23 @@ export const client = {
     update: (id: string, payload: Partial<CollectionRow> & { name: string }) =>
       api<CollectionRow>(`/collections/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
     remove: (id: string) => api<void>(`/collections/${id}`, { method: "DELETE" }),
+    duplicate: (id: string) =>
+      api<{ collection: CollectionRow; requests: RequestRow[] }>(
+        `/collections/${id}/duplicate`,
+        { method: "POST" },
+      ),
   },
   requests: {
     create: (payload: Partial<RequestRow> & DraftRequest) =>
       api<RequestRow>("/requests", { method: "POST", body: JSON.stringify(payload) }),
-    update: (id: string, payload: Partial<RequestRow> & DraftRequest) =>
+    update: (id: string, payload: Partial<RequestRow> & Record<string, unknown>) =>
       api<RequestRow>(`/requests/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
     remove: (id: string) => api<void>(`/requests/${id}`, { method: "DELETE" }),
+    reorder: (collectionId: string, requestIds: string[]) =>
+      api<RequestRow[]>(`/collections/${collectionId}/requests/order`, {
+        method: "PUT",
+        body: JSON.stringify({ requestIds }),
+      }),
   },
   environments: {
     create: (payload: Partial<EnvironmentRow> & { name: string; variablesJson: string }) =>

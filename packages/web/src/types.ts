@@ -16,6 +16,7 @@ export interface RequestRow {
   retain: number;
   brokerProfileId: string | null;
   environmentId: string | null;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }

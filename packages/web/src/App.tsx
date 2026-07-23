@@ -326,6 +326,9 @@ export default function App() {
     name: "",
     description: "",
   });
+  const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
+  const [dragOverRequestId, setDragOverRequestId] = useState<string | null>(null);
+  const [dragOverCollectionId, setDragOverCollectionId] = useState<string | null>(null);
   const [envDraft, setEnvDraft] = useState({
     id: "",
     name: "local",
@@ -710,6 +713,180 @@ export default function App() {
     setCollectionMenuId(null);
     await refresh();
     setCollectionModal(null);
+  };
+
+  const duplicateCollection = async (collection: CollectionRow) => {
+    try {
+      const duplicated = await client.collections.duplicate(collection.id);
+      await refresh();
+      setBootstrap((current) => {
+        if (!current) return current;
+        const nextCollections = current.collections.filter(
+          (item) => item.id !== duplicated.collection.id,
+        );
+        const sourceIndex = nextCollections.findIndex(
+          (item) => item.id === collection.id,
+        );
+        nextCollections.splice(
+          sourceIndex >= 0 ? sourceIndex + 1 : nextCollections.length,
+          0,
+          duplicated.collection,
+        );
+        return { ...current, collections: nextCollections };
+      });
+      selectCollection(duplicated.collection);
+      setCollectionMenuId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to duplicate collection");
+    }
+  };
+
+  const reorderCollectionRequests = async (
+    collectionId: string,
+    requestIds: string[],
+  ) => {
+    try {
+      await client.requests.reorder(collectionId, requestIds);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to reorder requests");
+    } finally {
+      setDraggedRequestId(null);
+      setDragOverRequestId(null);
+      setDragOverCollectionId(null);
+    }
+  };
+
+  const sortCollectionRequests = async (collection: CollectionRow) => {
+    const requests = (bootstrap?.requests ?? []).filter(
+      (request) => request.collectionId === collection.id,
+    );
+    const sortedIds = [...requests]
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        }),
+      )
+      .map((request) => request.id);
+    setCollectionMenuId(null);
+    if (sortedIds.length > 1) {
+      await reorderCollectionRequests(collection.id, sortedIds);
+    }
+  };
+
+  const dropRequest = (
+    collectionId: string,
+    targetRequestId: string,
+    event: React.DragEvent<HTMLButtonElement>,
+  ) => {
+    event.preventDefault();
+    const sourceRequestId =
+      draggedRequestId ?? event.dataTransfer.getData("text/plain");
+    setDragOverRequestId(null);
+    if (!sourceRequestId || sourceRequestId === targetRequestId) {
+      setDraggedRequestId(null);
+      return;
+    }
+    const requests = (bootstrap?.requests ?? []).filter(
+      (request) => request.collectionId === collectionId,
+    );
+    const sourceRequest = (bootstrap?.requests ?? []).find(
+      (request) => request.id === sourceRequestId,
+    );
+    if (!sourceRequest) {
+      setDraggedRequestId(null);
+      return;
+    }
+    const insertionIndex = requests.findIndex(
+      (request) => request.id === targetRequestId,
+    );
+    if (sourceRequest.collectionId !== collectionId) {
+      void moveRequestToCollection(
+        sourceRequestId,
+        collectionId,
+        insertionIndex < 0 ? requests.length : insertionIndex,
+      );
+      return;
+    }
+    const reordered = [...requests];
+    const sourceIndex = reordered.findIndex(
+      (request) => request.id === sourceRequestId,
+    );
+    const targetIndex = reordered.findIndex(
+      (request) => request.id === targetRequestId,
+    );
+    if (sourceIndex < 0 || targetIndex < 0) {
+      setDraggedRequestId(null);
+      return;
+    }
+    const [moved] = reordered.splice(sourceIndex, 1);
+    reordered.splice(targetIndex, 0, moved);
+    void reorderCollectionRequests(
+      collectionId,
+      reordered.map((request) => request.id),
+    );
+  };
+
+  const moveRequestToCollection = async (
+    requestId: string,
+    targetCollectionId: string,
+    targetIndex?: number,
+  ) => {
+    const sourceRequest = (bootstrap?.requests ?? []).find(
+      (request) => request.id === requestId,
+    );
+    if (!sourceRequest || sourceRequest.collectionId === targetCollectionId) {
+      setDraggedRequestId(null);
+      setDragOverCollectionId(null);
+      return;
+    }
+
+    const targetRequests = (bootstrap?.requests ?? []).filter(
+      (request) => request.collectionId === targetCollectionId,
+    );
+    const targetRequestIds = targetRequests.map((request) => request.id);
+    targetRequestIds.splice(targetIndex ?? targetRequestIds.length, 0, requestId);
+
+    try {
+      await client.requests.update(requestId, {
+        ...sourceRequest,
+        collectionId: targetCollectionId,
+        retain: Boolean(sourceRequest.retain),
+      });
+      await client.requests.reorder(targetCollectionId, targetRequestIds);
+      await refresh();
+      setSelectedCollectionId(targetCollectionId);
+      setSelectedRequestId(requestId);
+      setExpandedCollectionIds((current) => {
+        if (current.includes(targetCollectionId)) return current;
+        const next = [...current, targetCollectionId];
+        localStorage.setItem(
+          "mqtt-postwoman.expandedCollections",
+          JSON.stringify(next),
+        );
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to move request");
+    } finally {
+      setDraggedRequestId(null);
+      setDragOverRequestId(null);
+      setDragOverCollectionId(null);
+    }
+  };
+
+  const dropRequestOnCollection = (
+    collectionId: string,
+    event: React.DragEvent<HTMLDivElement>,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceRequestId =
+      draggedRequestId ?? event.dataTransfer.getData("text/plain");
+    if (sourceRequestId) {
+      void moveRequestToCollection(sourceRequestId, collectionId);
+    }
   };
 
   const openCreateCollection = () => {
@@ -1256,7 +1433,15 @@ export default function App() {
               return (
                 <div key={collection.id} className="collection-node">
                   <div
-                    className={`collection-item ${collection.id === selectedCollectionId ? "active" : ""}`}
+                    className={`collection-item ${collection.id === selectedCollectionId ? "active" : ""} ${collection.id === dragOverCollectionId ? "drag-over" : ""}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverCollectionId(collection.id);
+                    }}
+                    onDrop={(event) =>
+                      dropRequestOnCollection(collection.id, event)
+                    }
                   >
                     <button
                       className="collection-toggle"
@@ -1314,6 +1499,16 @@ export default function App() {
                       {collectionMenuId === collection.id && (
                         <div className="collection-menu">
                           <button
+                            onClick={() => sortCollectionRequests(collection)}
+                          >
+                            Sort
+                          </button>
+                          <button
+                            onClick={() => duplicateCollection(collection)}
+                          >
+                            Duplicate
+                          </button>
+                          <button
                             onClick={() => openEditCollection(collection)}
                           >
                             Edit
@@ -1339,7 +1534,26 @@ export default function App() {
                       {collectionRequests.map((request) => (
                         <button
                           key={request.id}
-                          className={`request-tree-item ${request.id === selectedRequestId ? "active" : ""}`}
+                          className={`request-tree-item ${request.id === selectedRequestId ? "active" : ""} ${request.id === draggedRequestId ? "dragging" : ""} ${request.id === dragOverRequestId ? "drag-over" : ""}`}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", request.id);
+                            setDraggedRequestId(request.id);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            setDragOverRequestId(request.id);
+                          }}
+                          onDrop={(event) =>
+                            dropRequest(collection.id, request.id, event)
+                          }
+                          onDragEnd={() => {
+                            setDraggedRequestId(null);
+                            setDragOverRequestId(null);
+                            setDragOverCollectionId(null);
+                          }}
                           onClick={() => selectRequest(request)}
                         >
                           <span className="request-method">MQTT</span>

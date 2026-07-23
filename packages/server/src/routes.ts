@@ -11,6 +11,7 @@ import {
   deleteEnvironment,
   deleteHelper,
   deleteRequest,
+  duplicateCollection,
   getBrokerProfile,
   getCollection,
   getConsumerSession,
@@ -30,6 +31,7 @@ import {
   upsertEnvironment,
   upsertHelper,
   upsertRequest,
+  reorderRequests,
 } from "./db";
 import { RuntimeManager } from "./runtime";
 import { resolveTemplatePayload } from "./template";
@@ -111,6 +113,14 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
     deleteCollection(db.raw, req.params.id);
     res.status(204).end();
   });
+  router.post("/collections/:id/duplicate", (req, res) => {
+    const duplicated = duplicateCollection(db.raw, req.params.id);
+    if (!duplicated) {
+      res.status(404).json({ message: "Collection not found" });
+      return;
+    }
+    res.status(201).json(duplicated);
+  });
 
   router.get("/requests", (req, res) => {
     const collectionId = typeof req.query.collectionId === "string" ? req.query.collectionId : undefined;
@@ -129,6 +139,16 @@ export function buildRouter(db = openDatabase(), runtime: RuntimeManager) {
   router.delete("/requests/:id", (req, res) => {
     deleteRequest(db.raw, req.params.id);
     res.status(204).end();
+  });
+  router.put("/collections/:id/requests/order", (req, res) => {
+    const schema = z.object({ requestIds: z.array(z.string()) });
+    try {
+      const input = schema.parse(req.body);
+      res.json(reorderRequests(db.raw, req.params.id, input.requestIds));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to reorder requests";
+      res.status(400).json({ message });
+    }
   });
 
   router.get("/environments", (_req, res) => res.json(listEnvironments(db.raw)));
